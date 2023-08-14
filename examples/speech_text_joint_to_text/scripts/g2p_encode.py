@@ -9,6 +9,8 @@ import logging
 import re
 import time
 
+from tqdm import tqdm
+
 from g2p_en import G2p
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,11 @@ def do_g2p(g2p, sent, res_wrds, is_first_sent):
     if sent in res_wrds:
         pho_seq = [res_wrds[sent]]
     else:
-        pho_seq = g2p(sent)
+        try:
+            pho_seq = g2p(sent)
+        except:
+            print(sent)
+            raise SystemExit
     if not is_first_sent:
         pho_seq = [" "] + pho_seq  # add space to separate
     return pho_seq
@@ -140,7 +146,7 @@ def process_sents(sents, args):
     g2p = G2p()
     out_sents = []
     res_wrds = load_reserve_word(args.reserve_word)
-    for sent in sents:
+    for sent in tqdm(sents):
         col1 = ""
         if args.reserve_first_column:
             col1, sent = sent.split(None, 1)
@@ -160,7 +166,7 @@ def main():
         try:
             import submitit
         except ImportError:
-            logger.warn(
+            logger.warning(
                 "submitit is not found and only one job is used to process the data"
             )
             submitit = None
@@ -175,7 +181,7 @@ def main():
         jobs = []
         for i in range(args.parallel_process_num):
             job = executor.submit(
-                process_sents, sent_list[lsize * i : lsize * (i + 1)], args
+                process_sents, sent_list[lsize * i: lsize * (i + 1)], args
             )
             jobs.append(job)
         is_running = True

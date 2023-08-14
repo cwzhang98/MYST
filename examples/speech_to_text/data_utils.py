@@ -30,8 +30,12 @@ PAD_TOKEN, PAD_TOKEN_ID = "<pad>", 1
 
 
 def gen_vocab(
-    input_path: Path, output_path_prefix: Path, model_type="bpe",
-    vocab_size=1000, special_symbols: Optional[List[str]] = None
+        input_path: Path,
+        output_path_prefix: Path,
+        model_type="bpe",
+        vocab_size=1000,
+        special_symbols: Optional[List[str]] = None,
+        accept_language: Optional[List[str]] = None
 ):
     # Train SentencePiece Model
     arguments = [
@@ -45,7 +49,9 @@ def gen_vocab(
         f"--bos_id={BOS_TOKEN_ID}",
         f"--eos_id={EOS_TOKEN_ID}",
         f"--pad_id={PAD_TOKEN_ID}",
+        f"--accept_language={accept_language}"
     ]
+    # add extra symbols to arguments
     if special_symbols is not None:
         _special_symbols = ",".join(special_symbols)
         arguments.append(f"--user_defined_symbols={_special_symbols}")
@@ -55,10 +61,10 @@ def gen_vocab(
     spm.Load(output_path_prefix.as_posix() + ".model")
     vocab = {i: spm.IdToPiece(i) for i in range(spm.GetPieceSize())}
     assert (
-        vocab.get(UNK_TOKEN_ID) == UNK_TOKEN
-        and vocab.get(PAD_TOKEN_ID) == PAD_TOKEN
-        and vocab.get(BOS_TOKEN_ID) == BOS_TOKEN
-        and vocab.get(EOS_TOKEN_ID) == EOS_TOKEN
+            vocab.get(UNK_TOKEN_ID) == UNK_TOKEN
+            and vocab.get(PAD_TOKEN_ID) == PAD_TOKEN
+            and vocab.get(BOS_TOKEN_ID) == BOS_TOKEN
+            and vocab.get(EOS_TOKEN_ID) == EOS_TOKEN
     )
     vocab = {
         i: s
@@ -70,12 +76,22 @@ def gen_vocab(
             f_out.write(f"{s} 1\n")
 
 
+def gen_phoneme_vocab(
+        data_path,
+        out_path
+):
+    """
+    generate phoneme vocab according to phoneme training text rather than download vocab
+    """
+    pass
+
+
 def extract_fbank_features(
-    waveform: torch.FloatTensor,
-    sample_rate: int,
-    output_path: Optional[Path] = None,
-    n_mel_bins: int = 80,
-    overwrite: bool = False,
+        waveform: torch.FloatTensor,
+        sample_rate: int,
+        output_path: Optional[Path] = None,
+        n_mel_bins: int = 80,
+        overwrite: bool = False,
 ):
     if output_path is not None and output_path.is_file() and not overwrite:
         return
@@ -134,71 +150,32 @@ def get_zip_manifest(
 
 
 def gen_config_yaml(
-    manifest_root: Path,
-    spm_filename: Optional[str] = None,
-    vocab_name: Optional[str] = None,
-    yaml_filename: str = "config.yaml",
-    specaugment_policy: Optional[str] = "lb",
-    prepend_tgt_lang_tag: bool = False,
-    sampling_alpha: Optional[float] = None,
-    input_channels: Optional[int] = 1,
-    input_feat_per_channel: Optional[int] = 80,
-    audio_root: str = "",
-    cmvn_type: str = "utterance",
-    gcmvn_path: Optional[Path] = None,
-    extra=None
+        manifest_root: Path,
+        lang: str,
+        spm_filename: Optional[str] = None,
+        yaml_filename: str = "config.yaml",
+        prepend_tgt_lang_tag: bool = True,
+        prepend_src_lang_tag: bool = True,
 ):
     manifest_root = manifest_root.absolute()
     writer = S2TDataConfigWriter(manifest_root / yaml_filename)
-    assert spm_filename is not None or vocab_name is not None
-    vocab_name = spm_filename.replace(".model", ".txt") if vocab_name is None \
-        else vocab_name
-    writer.set_vocab_filename(vocab_name)
-    if input_channels is not None:
-        writer.set_input_channels(input_channels)
-    if input_feat_per_channel is not None:
-        writer.set_input_feat_per_channel(input_feat_per_channel)
-    specaugment_setters = {
-        "lb": writer.set_specaugment_lb_policy,
-        "ld": writer.set_specaugment_ld_policy,
-        "sm": writer.set_specaugment_sm_policy,
-        "ss": writer.set_specaugment_ss_policy,
-    }
-    specaugment_setter = specaugment_setters.get(specaugment_policy, None)
-    if specaugment_setter is not None:
-        specaugment_setter()
-    if spm_filename is not None:
-        writer.set_bpe_tokenizer(
-            {
-                "bpe": "sentencepiece",
-                "sentencepiece_model": (manifest_root / spm_filename).as_posix(),
-            }
-        )
-    if prepend_tgt_lang_tag:
-        writer.set_prepend_tgt_lang_tag(True)
-    if sampling_alpha is not None:
-        writer.set_sampling_alpha(sampling_alpha)
 
-    if cmvn_type not in ["global", "utterance"]:
-        raise NotImplementedError
+    assert spm_filename is not None
+    writer.set_audio_root(manifest_root.as_posix())
+    writer.set_input_channels(1)
 
-    if specaugment_policy is not None:
-        writer.set_feature_transforms(
-            "_train", [f"{cmvn_type}_cmvn", "specaugment"]
-        )
-    writer.set_feature_transforms("*", [f"{cmvn_type}_cmvn"])
+    writer.set_vocab_filename(spm_filename.replace("model", "txt"))
+    writer.set_bpe_tokenizer(
+        {
+            "bpe": "sentencepiece",
+            "sentencepiece_model": (manifest_root / spm_filename).as_posix(),
+        }
+    )
+    writer.set_prepend_tgt_lang_tag(prepend_tgt_lang_tag)
+    writer.set_prepend_src_lang_tag(prepend_src_lang_tag)
 
-    if cmvn_type == "global":
-        if gcmvn_path is None:
-            raise ValueError("Please provide path of global cmvn file.")
-        else:
-            writer.set_global_cmvn(gcmvn_path.as_posix())
-
-    if len(audio_root) > 0:
-        writer.set_audio_root(audio_root)
-
-    if extra is not None:
-        writer.set_extra(extra)
+    writer.set_shuffle_dataset(True)
+    writer.set_language_pair(f"en-{lang}")
     writer.flush()
 
 
@@ -243,7 +220,7 @@ def load_tsv_to_dicts(path: Union[str, Path]) -> List[dict]:
 
 
 def filter_manifest_df(
-    df, is_train_split=False, extra_filters=None, min_n_frames=5, max_n_frames=3000
+        df, is_train_split=False, extra_filters=None, min_n_frames=5, max_n_frames=3000
 ):
     filters = {
         "no speech": df["audio"] == "",
@@ -254,7 +231,8 @@ def filter_manifest_df(
         filters[f"long speech (>{max_n_frames} frames)"] = df["n_frames"] > max_n_frames
     if extra_filters is not None:
         filters.update(extra_filters)
-    invalid = reduce(lambda x, y: x | y, filters.values())
+    # for a row in df, it should satisfy all filters(value is False in all filters), then it can be retained
+    invalid = reduce(lambda x, y: x | y, filters.values())  # assemble all filters
     valid = ~invalid
     print(
         "| "
@@ -376,8 +354,17 @@ class S2TDataConfigWriter(object):
     def set_prepend_tgt_lang_tag(self, flag: bool = True):
         self.config["prepend_tgt_lang_tag"] = flag
 
+    def set_prepend_src_lang_tag(self, flag: bool = True):
+        self.config["prepend_src_lang_tag"] = flag
+
     def set_sampling_alpha(self, sampling_alpha: float = 1.0):
         self.config["sampling_alpha"] = sampling_alpha
 
     def set_extra(self, data):
         self.config.update(data)
+
+    def set_language_pair(self, language_pair="en-de"):
+        self.config["language_pair"] = language_pair
+
+    def set_shuffle_dataset(self, flag=True):
+        self.config["shuffle"] = flag
