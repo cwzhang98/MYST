@@ -49,12 +49,14 @@ def gen_vocab(
         f"--bos_id={BOS_TOKEN_ID}",
         f"--eos_id={EOS_TOKEN_ID}",
         f"--pad_id={PAD_TOKEN_ID}",
-        f"--accept_language={accept_language}"
     ]
     # add extra symbols to arguments
     if special_symbols is not None:
         _special_symbols = ",".join(special_symbols)
         arguments.append(f"--user_defined_symbols={_special_symbols}")
+    if accept_language is not None:
+        _accept_language = ",".join(accept_language)
+        arguments.append(f"--accept_language={_accept_language}")
     sp.SentencePieceTrainer.Train(" ".join(arguments))
     # Export fairseq dictionary
     spm = sp.SentencePieceProcessor()

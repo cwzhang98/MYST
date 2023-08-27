@@ -486,7 +486,7 @@ def compute_mask_indices(
         if mask_type == "static":
             lengths = np.full(num_mask, mask_length)
         elif mask_type == "uniform":
-            lengths = rng.randint(mask_other, mask_length * 2 + 1, size=num_mask)
+            lengths = rng.integers(mask_other, mask_length * 2 + 1, size=num_mask)
         elif mask_type == "normal":
             lengths = rng.normal(mask_length, mask_other, size=num_mask)
             lengths = [max(1, int(round(x))) for x in lengths]
@@ -506,7 +506,7 @@ def compute_mask_indices(
             mask_idc = []
 
             def arrange(s, e, length, keep_length):
-                span_start = rng.randint(s, e - length)
+                span_start = rng.integers(s, e - length)
                 mask_idc.extend(span_start + i for i in range(length))
 
                 new_parts = []
@@ -521,7 +521,7 @@ def compute_mask_indices(
             for length in sorted(lengths, reverse=True):
                 lens = np.fromiter(
                     (e - s if e - s >= length + min_space else 0 for s, e in parts),
-                    np.int,
+                    np.int64,
                 )
                 l_sum = np.sum(lens)
                 if l_sum == 0:
@@ -1072,7 +1072,7 @@ def compute_mask_indices_v3(
         if mask_type == "static":
             lengths = np.full(num_mask, mask_length)
         elif mask_type == "uniform":
-            lengths = rng.randint(mask_other, mask_length * 2 + 1, size=num_mask)
+            lengths = rng.integers(mask_other, mask_length * 2 + 1, size=num_mask)
         elif mask_type == "normal":
             lengths = rng.normal(mask_length, mask_other, size=num_mask)
             lengths = [max(1, int(round(x))) for x in lengths]
@@ -1089,7 +1089,7 @@ def compute_mask_indices_v3(
             mask_idc = []
 
             def arrange(s, e, length, keep_length):
-                span_start = rng.randint(s, e - length)
+                span_start = rng.integers(s, e - length)
                 mask_idc.extend(span_start + i for i in range(length))
 
                 new_parts = []
@@ -1104,7 +1104,7 @@ def compute_mask_indices_v3(
             for length in sorted(lengths, reverse=True):
                 lens = np.fromiter(
                     (e - s if e - s >= length + min_space else 0 for s, e in parts),
-                    np.int,
+                    np.int64,
                 )
                 l_sum = np.sum(lens)
                 if l_sum == 0:

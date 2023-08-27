@@ -16,7 +16,7 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 import soundfile as sf
-from examples.speech_to_text.data_utils import (
+from data_utils import (
     filter_manifest_df,
     gen_config_yaml,
     gen_vocab,
@@ -144,6 +144,7 @@ def process(args):
 
     # add extra mt training data to train sp model
     if args.extra_mt_data_path:
+        print("add extra mt data to train text")
         mt_data_path = Path(args.extra_mt_data_path) / "en-de"
         assert mt_data_path.is_dir()
         with open(mt_data_path / "train.de") as f:
@@ -174,14 +175,14 @@ def process(args):
             accept_language=["en", f"{lang}"]
         )
     # Generate config YAML
-    gen_config_yaml(
-        cur_root,
-        args.lang,
-        spm_filename_prefix + ".model",
-        yaml_filename=f"config_st.yaml",
-        prepend_tgt_lang_tag=True,
-        prepend_src_lang_tag=True
-    )
+    # gen_config_yaml(
+    #     cur_root,
+    #     args.lang,
+    #     spm_filename_prefix + ".model",
+    #     yaml_filename=f"config_st.yaml",
+    #     prepend_tgt_lang_tag=False,
+    #     prepend_src_lang_tag=False
+    # )
 
 
 def main():

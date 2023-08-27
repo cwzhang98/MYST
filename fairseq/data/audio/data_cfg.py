@@ -86,6 +86,9 @@ class S2TDataConfig(object):
         multilingual setting). During inference, this requires `--prefix-size 1`
         to force BOS to be lang ID token."""
         return self.config.get("prepend_tgt_lang_tag", False)
+    
+    def prepend_src_lang_tag(self) -> bool:
+        return self.config.get("prepend_src_lang_tag", False)
 
     @property
     def prepend_bos_and_append_tgt_lang_tag(self) -> bool:

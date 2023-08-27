@@ -13,6 +13,7 @@ import os
 import random
 
 import soundfile
+from tqdm import tqdm
 
 
 def get_parser():
@@ -59,14 +60,14 @@ def main(args):
         if args.valid_percent > 0
         else None
     )
-
+    num_samples = 0
     with open(os.path.join(args.dest, "train.tsv"), "w") as train_f:
         print(dir_path, file=train_f)
 
         if valid_f is not None:
             print(dir_path, file=valid_f)
 
-        for fname in glob.iglob(search_path, recursive=True):
+        for fname in tqdm(glob.iglob(search_path, recursive=True)):
             file_path = os.path.realpath(fname)
 
             if args.path_must_contain and args.path_must_contain not in file_path:
@@ -77,6 +78,8 @@ def main(args):
             print(
                 "{}\t{}".format(os.path.relpath(file_path, dir_path), frames), file=dest
             )
+            num_samples += 1
+        print(f"number of samples: {num_samples}")
     if valid_f is not None:
         valid_f.close()
 

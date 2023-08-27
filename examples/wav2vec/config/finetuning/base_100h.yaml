@@ -3,36 +3,47 @@
 common:
   fp16: true
   log_format: json
-  log_interval: 200
+  log_interval: 100
+  tensorboard_logdir: audio_ctc_pt_log
+  on_cpu_convert_precision: true
 
 checkpoint:
+  save_dir: checkpoint/encoder_ctc_pt
+  restore_file: checkpoint/encoder_ctc_pt/checkpoint_last.pt
   no_epoch_checkpoints: true
   best_checkpoint_metric: wer
+  patience: 10
+  checkpoint_suffix: ctc_pt
 
 task:
   _name: audio_finetuning
   data: ???
   normalize: false
-  labels: ltr
+  labels: pho
+  enable_padding: true
+  eval_wer: true
+  eval_wer_post_process: none
 
 dataset:
-  num_workers: 6
-  max_tokens: 3200000
+  num_workers: 8
+  max_tokens: 1000000
   skip_invalid_size_inputs_valid_test: true
-  valid_subset: dev_other
+  valid_subset: dev_clean,dev_other
 
 distributed_training:
   ddp_backend: legacy_ddp
-  distributed_world_size: 2
+  distributed_world_size: 4
 
 criterion:
   _name: ctc
   zero_infinity: true
+  post_process: none
 
 optimization:
-  max_update: 80000
+  max_update: 100000
+  clip_norm: 10.0
   lr: [0.00003]
-  sentence_avg: true
+  sentence_avg: false
   update_freq: [4]
 
 optimizer:
@@ -49,10 +60,16 @@ model:
   _name: wav2vec_ctc
   w2v_path: ???
   apply_mask: true
-  mask_prob: 0.65
-  mask_channel_prob: 0.5
-  mask_channel_length: 64
+  mask_prob: 0.5
+  no_mask_overlap: true
+  mask_min_space: 10
+  mask_dropout: 0.2
+  mask_channel_prob: 0.1
+  mask_channel_length: 10
+  no_mask_channel_overlap: true
+  mask_channel_min_space: 10
   layerdrop: 0.1
+  dropout: 0.1
   activation_dropout: 0.1
   feature_grad_mult: 0.0
   freeze_finetune_updates: 0

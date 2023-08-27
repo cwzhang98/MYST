@@ -2,7 +2,7 @@ import os
 import logging
 import json
 from pathlib import Path
-from fairseq.data import Dictionary
+from fairseq.data import Dictionary, encoders
 from argparse import Namespace
 from fairseq.tasks import LegacyFairseqTask, register_task
 from fairseq.data.audio.data_cfg import S2TDataConfig
@@ -23,20 +23,37 @@ class Wav2VecAsrFineTuning(LegacyFairseqTask):
         parser.add_argument("--max-audio-positions", default=6000, type=int, metavar="N",
                             help="max number of tokens in the source audio sequence")
         # use different form of target sequence
-        parser.add_argument("--target-type", type)
+        parser.add_argument("--target-type", type, choices=['phoneme', 'subword'], default='phoneme',
+                            help='token type of target sequence')
         # options for reporting BLEU during validation
         parser.add_argument('--eval-bleu', action='store_true',
                             help='evaluation with BLEU scores')
+        # space
         parser.add_argument('--eval-bleu-detok', type=str, default="space",
                             help='detokenize before computing BLEU (e.g., "moses"); '
                                  'required if using --eval-bleu; use "space" to '
                                  'disable detokenization; see fairseq.data.encoders '
                                  'for other options')
+        # set None when using phoneme sequence
         parser.add_argument('--eval-bleu-detok-args', type=str, metavar='JSON',
                             help='args for building the tokenizer, if needed')
         # set False
         parser.add_argument('--eval-tokenized-bleu', action='store_true', default=False,
                             help='compute tokenized BLEU instead of sacrebleu')
+        
+        parser.add_argument('--eval-bleu-remove-bpe', nargs='?', const='@@ ', default=None,
+                            help='remove BPE before computing BLEU')
+        # decode settings during infernece
+        parser.add_argument('--eval-bleu-args', type=str, metavar='JSON',
+                            help='generation args for BLUE scoring, '
+                                 'e.g., \'{"beam": 4, "lenpen": 0.6}\'')
+        # print dev samples
+        parser.add_argument('--eval-bleu-print-samples', action='store_true',
+                            help='print sample generations during validation')
+        # set None or 'sentencepiece'
+        parser.add_argument('--eval-bleu-bpe', type=str, metavar='BPE',
+                            default=None,
+                            help='args for building the bpe, if needed')
 
     def __init__(self, args, tgt_dict):
         super().__init__(args)
@@ -55,15 +72,31 @@ class Wav2VecAsrFineTuning(LegacyFairseqTask):
         if getattr(args, "train_subset", None) is not None:
             if not all(s.startswith("train") for s in args.train_subset.split(",")):
                 raise ValueError('Train splits should be named like "train*".')
+            
+        if data_cfg.prepend_tgt_lang_tag and args.prefix_size != 1:
+            raise ValueError(
+                'Please set "--prefix-size 1" since '
+                "target language ID token is prepended as BOS."
+            )
         return cls(args, tgt_dict)
 
     def build_model(self, args, from_checkpoint=False):
-        args.input_channels = self.data_cfg.input_channels
         model = super().build_model(args)
         if getattr(args, "eval_bleu", False):
             assert getattr(args, "eval_bleu_detok", None) == "space", (
                 "--eval-bleu-detok is required if using --eval-bleu; "
             )
+            # if subword sequence
+            if args.target_type == "subword":
+                # detokenizer_args and eval_bleu_detok should be {} and 'space'
+                detokenizer_args = json.loads(getattr(args, "eval_bleu_detok_args", None) or "{}")
+                self.tokenizer = encoders.build_tokenizer(
+                    Namespace(tokenizer=getattr(args, "eval_bleu_detok", None), **detokenizer_args)
+                )
+                if args.eval_bleu_bpe is not None:
+                    self.bpe = self.build_bpe(args)
+                else:
+                    self.bpe = None         
         # beam search args
         gen_args = json.loads(getattr(args, "eval_bleu_args", "{}") or "{}")
         # decode generator
@@ -71,29 +104,17 @@ class Wav2VecAsrFineTuning(LegacyFairseqTask):
 
         return model
 
-    def build_generator(
-        self,
-        models,
-        args,
-        seq_gen_cls=None,
-        extra_gen_cls_kwargs=None,
-        prefix_allowed_tokens_fn=None,
-    ):
-        return 0
-
     def build_tokenizer(self, args):
-        pass
+            logger.info(f"pre-tokenizer: {self.data_cfg.pre_tokenizer}")
+        return encoders.build_tokenizer(Namespace(**self.data_cfg.pre_tokenizer))
 
     def build_bpe(self, args):
-        pass
+        logger.info(f"tokenizer: {self.data_cfg.bpe_tokenizer}")
+        return encoders.build_bpe(Namespace(**self.data_cfg.bpe_tokenizer))
 
     @property
     def target_dictionary(self):
         return self.tgt_dict
-
-    @property
-    def source_dictionary(self):
-        return None
 
     def max_positions(self):
         return self.args.max_audio_positions, self.args.max_source_positions
@@ -102,7 +123,8 @@ class Wav2VecAsrFineTuning(LegacyFairseqTask):
         pass
 
     def valid_step(self, sample, model, criterion):
-        pass
+        """validation with scareBleu evaluation"""
+        loss, sample_size, logging_output = super().valid_step(sample, model, criterion)
 
     def inference_step(
         self, generator, models, sample, prefix_tokens=None, constraints=None

@@ -385,21 +385,16 @@ class Wav2VecEncoder(FairseqEncoder):
             "attention_dropout": args.attention_dropout,
             "mask_length": args.mask_length,
             "mask_prob": args.mask_prob,
-            "require_same_masks": getattr(args, "require_same_masks", True),
-            "pct_holes": getattr(args, "mask_dropout", 0),
             "mask_selection": args.mask_selection,
             "mask_other": args.mask_other,
             "no_mask_overlap": args.no_mask_overlap,
             "mask_channel_length": args.mask_channel_length,
             "mask_channel_prob": args.mask_channel_prob,
-            "mask_channel_before": args.mask_channel_before,
             "mask_channel_selection": args.mask_channel_selection,
             "mask_channel_other": args.mask_channel_other,
             "no_mask_channel_overlap": args.no_mask_channel_overlap,
             "encoder_layerdrop": args.layerdrop,
             "feature_grad_mult": args.feature_grad_mult,
-            "offload_activations": args.offload_activations,
-            "min_params_to_wrap": args.min_params_to_wrap,
         }
 
         if args.w2v_args is None:
