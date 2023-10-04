@@ -149,7 +149,10 @@ class RawAudioDataset(FairseqDataset):
         input = {"source": collated_sources}
         if self.corpus_key is not None:
             input["corpus_key"] = [self.corpus_key] * len(sources)
-        out = {"id": torch.LongTensor([s["id"] for s in samples])}
+        out = {
+            "id": torch.LongTensor([s["id"] for s in samples]),
+            "source_lengths": torch.LongTensor(sizes)
+        }
         if self.pad:
             input["padding_mask"] = padding_mask
 

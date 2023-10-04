@@ -4,16 +4,14 @@ common:
   fp16: true
   log_format: json
   log_interval: 100
-  tensorboard_logdir: audio_ctc_pt_log
+  tensorboard_logdir: /data/cwzhang98/project/MYST/audio_cif_pt_log
   on_cpu_convert_precision: true
-
 checkpoint:
-  save_dir: checkpoint/encoder_ctc_pt
-  restore_file: checkpoint/encoder_ctc_pt/checkpoint_last.pt
+  save_dir: /data/cwzhang98/project/MYST/checkpoint
+  restore_file: /data/cwzhang98/project/MYST/checkpoint/checkpoint_last.pt
   no_epoch_checkpoints: true
-  best_checkpoint_metric: wer
-  patience: 10
-  checkpoint_suffix: ctc_pt
+  best_checkpoint_metric: loss
+  patience: 5
 
 task:
   _name: audio_finetuning
@@ -21,29 +19,29 @@ task:
   normalize: false
   labels: pho
   enable_padding: true
-  eval_wer: true
-  eval_wer_post_process: none
 
 dataset:
   num_workers: 8
   max_tokens: 1000000
   skip_invalid_size_inputs_valid_test: true
   valid_subset: dev_clean,dev_other
+  update_epoch_batch_itr: false
 
 distributed_training:
   ddp_backend: legacy_ddp
   distributed_world_size: 4
 
 criterion:
-  _name: ctc
-  zero_infinity: true
-  post_process: none
+  _name: label_smoothed_cross_entropy_with_ctc_with_qua
+  report_accuracy: true
+  ctc_weight: 0.5
+  label_smoothing: 0.1
 
 optimization:
-  max_update: 100000
+  max_update: 500000
   clip_norm: 10.0
-  lr: [0.00003]
-  sentence_avg: false
+  lr: [1e-4]
+  sentence_avg: true
   update_freq: [4]
 
 optimizer:
@@ -52,9 +50,8 @@ optimizer:
   adam_eps: 1e-08
 
 lr_scheduler:
-  _name: tri_stage
-  phase_ratio: [0.1, 0.4, 0.5]
-  final_lr_scale: 0.05
+  _name: inverse_sqrt
+  warmup_updates: 5000
 
 model:
   _name: wav2vec_ctc
@@ -68,8 +65,14 @@ model:
   mask_channel_length: 10
   no_mask_channel_overlap: true
   mask_channel_min_space: 10
-  layerdrop: 0.1
   dropout: 0.1
-  activation_dropout: 0.1
+  activation_dropout: 0.0
   feature_grad_mult: 0.0
   freeze_finetune_updates: 0
+  weight_predictor_stop_gradient: true
+  use_attention: true
+  cif_attention_dropout: 0.1
+  beta: 1.0
+  ctc_joint_training: true
+  shared_proj: true
+  sub_sampler: false
