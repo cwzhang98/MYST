@@ -5,22 +5,22 @@
 
 from fairseq.models import BaseFairseqModel, register_model
 from fairseq.models.wav2vec.wav2vec2_asr import (
-    Wav2Vec2CtcConfig,
+    Wav2Vec2AsrConfig,
     Wav2VecCtc,
     Wav2VecEncoder,
 )
 from fairseq.tasks import FairseqTask
 
 
-@register_model("wav2vec2_laser", dataclass=Wav2Vec2CtcConfig)
+@register_model("wav2vec2_laser", dataclass=Wav2Vec2AsrConfig)
 class Wav2VecLaser(Wav2VecCtc):
-    def __init__(self, cfg: Wav2Vec2CtcConfig, w2v_encoder: BaseFairseqModel):
+    def __init__(self, cfg: Wav2Vec2AsrConfig, w2v_encoder: BaseFairseqModel):
         super().__init__(cfg, w2v_encoder)
         self.num_updates = 0
         self.freeze_finetune_updates = cfg.freeze_finetune_updates
 
     @classmethod
-    def build_model(cls, cfg: Wav2Vec2CtcConfig, task: FairseqTask):
+    def build_model(cls, cfg: Wav2Vec2AsrConfig, task: FairseqTask):
         """Build a new model instance."""
         w2v_encoder = Wav2VecEncoder(cfg, 1024)
         return cls(cfg, w2v_encoder)

@@ -4,14 +4,13 @@ common:
   fp16: true
   log_format: json
   log_interval: 100
-  tensorboard_logdir: /data/cwzhang98/project/MYST/audio_cif_pt_log
-  on_cpu_convert_precision: true
+  tensorboard_logdir: /home2/cwzhang98/project/MYST/audio_cif_pt_log
 checkpoint:
-  save_dir: /data/cwzhang98/project/MYST/checkpoint
-  restore_file: /data/cwzhang98/project/MYST/checkpoint/checkpoint_last.pt
+  save_dir: /home2/cwzhang98/project/MYST/checkpoint
+  restore_file: /home2/cwzhang98/project/MYST/checkpoint/checkpoint_last.pt
   no_epoch_checkpoints: true
   best_checkpoint_metric: loss
-  patience: 5
+  patience: 10
 
 task:
   _name: audio_finetuning
@@ -19,17 +18,18 @@ task:
   normalize: false
   labels: pho
   enable_padding: true
+  src_lang_tag: <lang:en>
 
 dataset:
   num_workers: 8
-  max_tokens: 1000000
+  max_tokens: 5000000
   skip_invalid_size_inputs_valid_test: true
   valid_subset: dev_clean,dev_other
   update_epoch_batch_itr: false
 
 distributed_training:
   ddp_backend: legacy_ddp
-  distributed_world_size: 4
+  distributed_world_size: 2
 
 criterion:
   _name: label_smoothed_cross_entropy_with_ctc_with_qua
@@ -42,7 +42,7 @@ optimization:
   clip_norm: 10.0
   lr: [1e-4]
   sentence_avg: true
-  update_freq: [4]
+  update_freq: [2]
 
 optimizer:
   _name: adam
@@ -51,7 +51,7 @@ optimizer:
 
 lr_scheduler:
   _name: inverse_sqrt
-  warmup_updates: 5000
+  warmup_updates: 4000
 
 model:
   _name: wav2vec_ctc
@@ -66,7 +66,7 @@ model:
   no_mask_channel_overlap: true
   mask_channel_min_space: 10
   dropout: 0.1
-  activation_dropout: 0.0
+  activation_dropout: 0.0 # if set, asr performance will drop drastically
   feature_grad_mult: 0.0
   freeze_finetune_updates: 0
   weight_predictor_stop_gradient: true
@@ -75,4 +75,4 @@ model:
   beta: 1.0
   ctc_joint_training: true
   shared_proj: true
-  sub_sampler: false
+  sub_sampler: true

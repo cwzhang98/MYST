@@ -149,12 +149,12 @@ class LabelSmoothedCrossEntropyWithCtcWithQuaCriterion(LabelSmoothedCrossEntropy
     @classmethod
     def reduce_metrics(cls, logging_outputs) -> None:
         super().reduce_metrics(logging_outputs)
-        loss_sum = sum(log.get("ctc_loss", 0) for log in logging_outputs)
+        ctc_loss_sum = sum(log.get("ctc_loss", 0) for log in logging_outputs)
         qua_loss = sum(log.get("qua_loss", 0) for log in logging_outputs)
         sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
 
         metrics.log_scalar(
-            "ctc_loss", loss_sum / sample_size / math.log(2), sample_size, round=3
+            "ctc_loss", ctc_loss_sum / sample_size / math.log(2), sample_size, round=3
         )
         metrics.log_scalar(
             "qua_loss", qua_loss / sample_size / math.log(2), sample_size, round=3

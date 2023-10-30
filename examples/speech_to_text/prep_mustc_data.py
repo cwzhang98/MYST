@@ -20,7 +20,6 @@ from data_utils import (
     filter_manifest_df,
     gen_config_yaml,
     gen_vocab,
-    gen_phoneme_vocab,
     load_df_from_tsv,
     save_df_to_tsv,
 )
@@ -28,7 +27,6 @@ import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from fairseq.data.audio.audio_utils import get_waveform, convert_waveform
 
 log = logging.getLogger(__name__)
 
@@ -115,7 +113,6 @@ def process(args):
 
     # Generate TSV manifest
     train_text = []
-    src_train_text = []
     # process all splits
     for split in MUSTC.SPLITS:
         print(f"Fetching en-{lang} split {split}...")
@@ -132,11 +129,9 @@ def process(args):
             manifest["src_lang"].append("en")
             manifest["tgt_lang"].append(lang)
         if is_train_split:
-            train_text.extend(manifest["tgt_text"])
+            train_text.extend(manifest["tgt_text"]) # train spm only using target text
             if args.src_tgt_joint_dict:
                 train_text.extend(manifest["src_text"])
-            elif args.gen_phoneme_vocab:  # separate src and tgt text for generate different dict
-                src_train_text.extend(manifest["src_text"])
         df = pd.DataFrame.from_dict(manifest)
         # filer manifest
         df = filter_manifest_df(df, is_train_split=is_train_split, max_n_frames=48000, min_n_frames=1000)
@@ -153,16 +148,6 @@ def process(args):
     # Generate vocab
     vocab_size_str = "" if args.vocab_type == "char" else str(args.vocab_size)
     spm_filename_prefix = f"spm_{args.vocab_type}_{vocab_size_str}_st"
-    if (not args.src_tgt_joint_dict) and args.gen_phoneme_vocab:
-        g2p_filename_prefix = "g2p_phoneme_st"
-        # generate src dict
-        with NamedTemporaryFile(mode="w") as f:
-            for t in src_train_text:
-                f.write(t + "\n")
-            gen_phoneme_vocab(
-                data_path=f.name,
-                out_path=os.path.join(cur_root.as_posix(), g2p_filename_prefix)
-            )
     with NamedTemporaryFile(mode="w") as f:
         for t in train_text:
             f.write(t + "\n")
@@ -175,14 +160,14 @@ def process(args):
             accept_language=["en", f"{lang}"]
         )
     # Generate config YAML
-    # gen_config_yaml(
-    #     cur_root,
-    #     args.lang,
-    #     spm_filename_prefix + ".model",
-    #     yaml_filename=f"config_st.yaml",
-    #     prepend_tgt_lang_tag=False,
-    #     prepend_src_lang_tag=False
-    # )
+    gen_config_yaml(
+        cur_root,
+        args.lang,
+        spm_filename_prefix + ".model",
+        yaml_filename=f"config_st.yaml",
+        prepend_tgt_lang_tag=False,
+        prepend_src_lang_tag=False
+    )
 
 
 def main():
@@ -192,12 +177,10 @@ def main():
                         choices=["de", "es", "fr", "it", "nl", "pt", "ro", "ru"])
 
     parser.add_argument("--src-tgt-joint-dict", action="store_true", help="generate joint dictionary")  # False
-    parser.add_argument("--vocab-type", default="phoneme", required=True, type=str,
+    parser.add_argument("--vocab-type", default="unigram", required=True, type=str,
                         choices=["bpe", "unigram", "char", "phoneme"])
-    parser.add_argument("--gen-phoneme-vocab", action="store_true",  # False
-                        help="generate phoneme dictionary rather than download it")
     parser.add_argument("--extra-mt-data-path", type=str, default="")
-    parser.add_argument("--vocab-size", default=10000, type=int)
+    parser.add_argument("--vocab-size", default=5000, type=int)
     args = parser.parse_args()
 
     process(args)

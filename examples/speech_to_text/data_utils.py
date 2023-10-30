@@ -78,16 +78,6 @@ def gen_vocab(
             f_out.write(f"{s} 1\n")
 
 
-def gen_phoneme_vocab(
-        data_path,
-        out_path
-):
-    """
-    generate phoneme vocab according to phoneme training text rather than download vocab
-    """
-    pass
-
-
 def extract_fbank_features(
         waveform: torch.FloatTensor,
         sample_rate: int,
