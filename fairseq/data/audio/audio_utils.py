@@ -12,7 +12,7 @@ from typing import BinaryIO, List, Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
-
+import torchaudio
 from fairseq.data.audio.waveform_transforms import CompositeAudioWaveformTransform
 
 SF_AUDIO_FILE_EXTENSIONS = {".wav", ".flac", ".ogg"}
@@ -165,6 +165,14 @@ def get_features_or_waveform_from_stored_zip(
         raise ValueError(f'Unknown file format for "{path}"')
     return features_or_waveform
 
+def get_raw_waveform_from_audio(path, offset, n_frames, normalization=True):
+    if isinstance(path, str):
+        assert path.endswith(".wav") or path.endswith(".flac"), \
+        "Unsupported audio format"
+    wavform, _ = torchaudio.load(path, frame_offset=offset, num_frames=n_frames)
+    if not normalization:
+        waveform *= 2 ** 15
+    return wavform
 
 def get_features_or_waveform(
     path: str, need_waveform=False, use_sample_rate=None, waveform_transforms=None
@@ -183,6 +191,7 @@ def get_features_or_waveform(
         features_or_waveform (numpy.ndarray): speech features or waveform.
     """
     _path, slice_ptr = parse_path(path)
+    assert Path(_path).exists(), f"File not found: {_path}"
     if len(slice_ptr) == 0:
         if need_waveform:
             return get_waveform(
@@ -195,14 +204,19 @@ def get_features_or_waveform(
             _path, waveform_transforms=waveform_transforms
         )
     elif len(slice_ptr) == 2:
-        features_or_waveform = get_features_or_waveform_from_stored_zip(
-            _path,
-            slice_ptr[0],
-            slice_ptr[1],
-            need_waveform=need_waveform,
-            use_sample_rate=use_sample_rate,
-            waveform_transforms=waveform_transforms,
-        )
+        if _path.endswith(".zip"):
+            features_or_waveform = get_features_or_waveform_from_stored_zip(
+                _path,
+                slice_ptr[0],
+                slice_ptr[1],
+                need_waveform=need_waveform,
+                use_sample_rate=use_sample_rate,
+                waveform_transforms=waveform_transforms,
+            )
+        else: #_path end with .wav
+           features_or_waveform = get_raw_waveform_from_audio(
+                _path, slice_ptr[0], slice_ptr[1]
+            ) 
     else:
         raise ValueError(f"Invalid path: {path}")
 

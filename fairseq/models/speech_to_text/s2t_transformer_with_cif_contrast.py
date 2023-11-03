@@ -6,8 +6,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from torch import Tensor
+from omegaconf import II
 from fairseq.data.data_utils import lengths_to_padding_mask
-from dataclass import FairseqDataclass
+from fairseq.dataclass import FairseqDataclass
 from fairseq.models import (
     FairseqEncoder,
     FairseqEncoderDecoderModel,
@@ -19,7 +20,6 @@ from fairseq.modules import (
     PositionalEmbedding,
     TransformerEncoderLayer
 )
-from fairseq.models.fairseq_encoder import EncoderOut
 from fairseq.models.transformer import Embedding, TransformerDecoder
 from fairseq.models.wav2vec import Wav2VecCtc
 
@@ -38,6 +38,7 @@ class S2TTransformerWithCifContrastConfig(FairseqDataclass):
         default='gelu',
         metadata={"help": "activation function to use"}
     )
+    max_source_positions: int = II("task.max_source_positions")
     # dropout
     dropout: float = field(
         default=0.1,
@@ -81,7 +82,7 @@ class S2TTransformerWithCifContrastConfig(FairseqDataclass):
         metadata={"help": "learnable positional embedding"}
     )
     textual_encoder_hidden_state: str = field(
-        default=None,
+        default="",
         metadata={"help": "comma separated index, specify which layer's hidden state returned in EncoderOut"}
     )
     # transformer decoder
@@ -111,7 +112,7 @@ class S2TTransformerWithCifContrastConfig(FairseqDataclass):
     )
     layernorm_embedding: bool = field(
         default=False,
-        metadata={"add layernorm to embedding"}
+        metadata={"help": "add layernorm to embedding"}
     )
     no_scale_embedding: bool = field(
         default=False,
@@ -131,7 +132,7 @@ class S2TTransformerWithCifContrast(FairseqEncoderDecoderModel):
        encoder_embed_tokens = cls.build_embedding(task.source_dictionary, cfg.encoder_embed_dim)
        decoder_embed_tokens = cls.build_embedding(task.target_dictionary, cfg.decoder_embed_dim)
        encoder = cls.build_encoder(cfg, task.source_dictionary, encoder_embed_tokens)
-       decoder = cls.build_encoder(cfg, task.target_dictionary, decoder_embed_tokens)
+       decoder = cls.build_decoder(cfg, task.target_dictionary, decoder_embed_tokens)
        return cls(encoder, decoder)
        
     @classmethod
@@ -154,8 +155,8 @@ class S2TTransformerWithCifContrast(FairseqEncoderDecoderModel):
         self, 
         src_tokens,
         src_lengths,
-        transcript_lengths,
         prev_output_tokens,
+        transcript_lengths=None,
         is_audio_input=True,
         **kwargs
     ):
@@ -168,7 +169,7 @@ class S2TTransformerWithCifContrast(FairseqEncoderDecoderModel):
 
 class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
     def __init__(self, cfg: S2TTransformerWithCifContrastConfig, dictionary, src_embedding):
-        super.__init__(dictionary)
+        super().__init__(dictionary)
         self.cfg = cfg
         self.freeze_w2v = cfg.freeze_w2v
         self.embed_tokens = src_embedding
@@ -187,10 +188,10 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
         assert cfg.w2v_cif_model_path is not None and os.path.isfile(cfg.w2v_cif_model_path)
         # load checkpoints
         ckpt = torch.load(cfg.w2v_cif_model_path)
-        assert ckpt["args"].w2v_args is not None
-        self.w2v_cif_args = ckpt["args"]
-        self.w2v_cif_model = Wav2VecCtc.build_model(ckpt["args"])
-        self.w2v_cif_model.load_state_model(ckpt["model"])
+        assert ckpt["cfg"]["model"] is not None
+        self.w2v_cif_model = Wav2VecCtc.build_model(ckpt["cfg"]["model"], self.dictionary)
+        self.w2v_cif_model.remove_pretrain_modules()
+        self.w2v_cif_model.load_state_dict(ckpt["model"], strict=True)
        
     def build_shared_encoder(self, cfg: S2TTransformerWithCifContrastConfig):
         self.positional_embed = (
@@ -212,7 +213,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             [TransformerEncoderLayer(cfg) for _ in range(cfg.encoder_layers)]
         )
         if cfg.encoder_normalize_before:
-            self.layer_norm = LayerNorm(self.textual_encoder_embed_dim)
+            self.layer_norm = LayerNorm(self.shared_encoder_embed_dim)
         else:
             self.layer_norm = None
     
@@ -227,7 +228,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             w2v_feature += positions
         w2v_feature = w2v_feature.transpose(0, 1) # B x T x C -> T x B x C
          
-        return w2v_feature, encoder_padding_mask, feature_lengths
+        return w2v_feature, encoder_padding_mask
 
     def encode_text(self, src_tokens):
         embedding = self.embed_tokens(src_tokens)
@@ -254,7 +255,8 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             src_lengths:(B)
         """
         if is_audio_input: # forward audio
-            x, encoder_padding_mask, acoustic_feat_lengths = self.encode_audio(src_tokens, src_lengths, transcript_lengths)
+            x, encoder_padding_mask = self.encode_audio(
+                src_tokens, src_lengths, transcript_lengths.squeeze(-1))
         else: # forward text
             x, encoder_padding_mask = self.encode_text(src_tokens)
             
@@ -262,7 +264,9 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
         
         if self.cfg.textual_encoder_hidden_state is not None:
             shared_encoder_states = []
-            textual_encoder_state_layers = int(self.cfg.textual_encoder_hidden_state.split(','))
+            textual_encoder_state_layers = [
+                int(layer) for layer in self.cfg.textual_encoder_hidden_state.split(',')
+            ]
         
         for index, layer in enumerate(self.transformer_layers):
             x = layer(x, encoder_padding_mask)
@@ -272,13 +276,12 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
         if self.layer_norm is not None:
             x = self.layer_norm(x)
         
-        return EncoderOut(
-            encoder_out=x,
-            encoder_padding_mask=encoder_padding_mask, # B x T x C
-            encoder_embedding=encoder_embedding, # T x B x C
-            encoder_states=None,
-            src_tokens=None,
-            src_lengths=None,
-            encoder_output_lengths=acoustic_feat_lengths,
-            shared_encoder_states=shared_encoder_states
-        )
+        return {
+            "encoder_out": [x], # T x B x C
+            "encoder_padding_mask": [encoder_padding_mask], # B x T
+            "encoder_embedding": encoder_embedding, # T x B x C
+            "encoder_states": None,
+            "src_tokens": None,
+            "src_lengths": None,
+            "shared_encoder_states": shared_encoder_states
+        }

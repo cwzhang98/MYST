@@ -2,7 +2,7 @@ import logging
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 from omegaconf import DictConfig
 import torch
 from torch import Tensor
@@ -16,6 +16,9 @@ from fairseq.data.audio.speech_text_triple_datatset import (
     SpeechTextTripleDataset,
     SpeechTextTripleDatasetCreator
 )
+from omegaconf import II
+import numpy as np
+from fairseq import metrics, utils
 from fairseq.tasks.translation import load_langpair_dataset
 from fairseq.data.audio.multi_modality_dataset import ModalityDatasetItem, MultiModalityDataset
 from fairseq.data.audio.speech_to_text_dataset import (
@@ -33,14 +36,11 @@ class SpeechToTextCifMutiContrastConfig(FairseqDataclass):
         default='',
         metadata={"help": "manifest root path"}
     )
-    src_dict_path: str = field(
-        default=None,
-        metadata={"help": "source text dict path"}
-    )
     config_yaml: str = field(
         default='',
         metadata={"help": "Configuration YAML filename (absolute path)"}
     )
+    # mutimodal dataset conf
     max_audio_tokens: int = field(
         default=1000000,
         metadata={"help": "max batch of tokens in audio sequences"}
@@ -62,15 +62,15 @@ class SpeechToTextCifMutiContrastConfig(FairseqDataclass):
         metadata={"help": "max number of tokens in the target text sequence"}
     )
     lang_pairs: str = field(
-        default=None,
+        default="en-de",
         metadata={"help": "language pairs for text training, eg: `en-de`"}
     )
     lang_prefix_tok: str = field(
-        default=None,
+        default="",
         metadata={"help": "starting token in decoder, eg: `<lang:de>`"}
     )
-    external_mt_data: str = field(
-        default="",
+    external_mt_data: Optional[str] = field(
+        default=None,
         metadata={"help": "path to the external parallel mt data, tsv file"}
     )
     text_data_sample_ratio: float = field(
@@ -90,7 +90,7 @@ class SpeechToTextCifMutiContrastConfig(FairseqDataclass):
             "see fairseq.data.encoders for other options"
         }
     )
-    eval_bleu_detok_args: str = field(
+    eval_bleu_detok_args: Optional[str] = field(
         default=None,
         metadata={"help": "args for building the tokenizer, if needed"}
     )
@@ -98,7 +98,7 @@ class SpeechToTextCifMutiContrastConfig(FairseqDataclass):
         default=False,
         metadata={"help": "compute tokenized BLEU instead of sacrebleu"}
     )
-    eval_bleu_bpe: str = field(
+    eval_bleu_bpe: Optional[str] = field(
         default=None,
         metadata={"help": "args for building the bpe, if needed"}
     )
@@ -106,19 +106,30 @@ class SpeechToTextCifMutiContrastConfig(FairseqDataclass):
         default="sentencepiece",
         metadata={"help": "remove BPE before computing BLEU"}
     )
-    eval_bleu_args: str = field(
+    eval_bleu_args: Optional[str] = field(
         default=None,
         metadata={"help": "generation args for BLUE scoring, e.g., {'beam': 4, 'lenpen': 0.6}"}
     )
-    eval_bleu_print_samples = field(
+    eval_bleu_print_samples: bool = field(
         default=True,
         metadata={"help": "print sample generations during validation"}
     )
+    seed: int = II("common.seed")
+    rebuild_batches: bool = True
 
-
-@register_task("speech_to_text_cif_muti_contrast", dataclass=SpeechToTextCifMutiContrastConfig)
-class SpeechToTextCifMutiContrast(FairseqTask):
-    def __init__(self, cfg: SpeechToTextCifMutiContrastConfig, data_cfg,  src_dict, tgt_dict):
+@register_task(
+    "speech_to_text_cif_muti_contrast",
+    dataclass=SpeechToTextCifMutiContrastConfig
+)
+class SpeechToTextCifMutiContrastTask(FairseqTask):
+    def __init__(
+        self,
+        cfg: SpeechToTextCifMutiContrastConfig,
+        data_cfg,
+        src_dict,
+        tgt_dict
+    ):
+        super().__init__(cfg)
         self.cfg = cfg
         self.src_dict = src_dict
         self.tgt_dict = tgt_dict
@@ -126,8 +137,8 @@ class SpeechToTextCifMutiContrast(FairseqTask):
         
     @classmethod
     def setup_task(cls, cfg: SpeechToTextCifMutiContrastConfig, **kwargs):
-        data_cfg = S2TDataConfig(Path(cfg.data) / cfg.config_yaml)
-        src_dict_path = Path(cfg.src_dict_path) / "dict.pho.txt"
+        data_cfg = S2TDataConfig(Path(cfg.config_yaml))
+        src_dict_path = Path(cfg.data) / cfg.lang_pairs / "dict.pho.txt"
         tgt_dict_path = Path(cfg.data) / cfg.lang_pairs / data_cfg.vocab_filename
         if not src_dict_path.is_file():
             raise FileNotFoundError(f"Dict not found: {src_dict_path}")
@@ -136,10 +147,9 @@ class SpeechToTextCifMutiContrast(FairseqTask):
         # add src lang tag to src dict
         assert cfg.lang_pairs is not None
         src_lang_tag  = f"<lang:{cfg.lang_pairs.split('-')[0]}>"
-        src_dict = Dictionary.load(src_dict_path)
+        src_dict = Dictionary.load(src_dict_path.as_posix())
         src_dict.add_symbol(src_lang_tag)
-        
-        tgt_dict = Dictionary.load(tgt_dict_path)
+        tgt_dict = Dictionary.load(tgt_dict_path.as_posix())
         logger.info(f"source dict size: {len(src_dict)}; target dict size: {len(tgt_dict)}")
         if getattr(cfg, "train_subset", None) is not None:
             if not all(s.startswith("train") for s in cfg.train_subset.split(",")):
@@ -151,26 +161,25 @@ class SpeechToTextCifMutiContrast(FairseqTask):
 
         return cls(cfg, data_cfg, src_dict, tgt_dict)
 
-    
-    def build_model(self, cfg: SpeechToTextCifMutiContrastConfig):
-        model = super(SpeechToTextCifMutiContrast, self).build_model(cfg)
-        if cfg.eval_bleu:
-            assert cfg.eval_bleu_detok is not None, \
+    def build_model(self, cfg: FairseqDataclass):
+        model = super().build_model(cfg)
+        if self.cfg.eval_bleu:
+            assert self.cfg.eval_bleu_detok is not None, \
                 "eval_bleu_detokenize is required id eval_bleu is true"
-            detok_args = json.loads(cfg.eval_bleu_detok_args or "{}")
+            detok_args = json.loads(self.cfg.eval_bleu_detok_args or "{}")
             self.tokenizer = encoders.build_tokenizer(
-                Namespace(tokenizer=cfg.eval_bleu_detok, **detok_args)
+                Namespace(tokenizer=self.cfg.eval_bleu_detok, **detok_args)
             )
-            if cfg.eval_bleu_bpe is not None:
-                self.bpe = self.build_bpe(cfg)
+            if self.cfg.eval_bleu_bpe is not None:
+                self.bpe = self.build_bpe()
             else:
                 self.bpe = None
-            generation_args = json.loads(cfg.eval_bleu_args or "{}")
+            generation_args = json.loads(self.cfg.eval_bleu_args or "{}")
             self.sequence_generator = self.build_generator([model], Namespace(**generation_args))
         return model
     
     def build_criterion(self, cfg: SpeechToTextCifMutiContrastConfig):
-        import criterions
+        from fairseq import criterions
         if (
             self.data_cfg.prepend_tgt_lang_tag or self.data_cfg.prepend_tgt_lang_tag
         ) and cfg.ignore_prefix_size != 1:
@@ -200,7 +209,7 @@ class SpeechToTextCifMutiContrast(FairseqTask):
         }
         # remove language token during generating
         extra_gen_cls_kwargs = {"symbols_to_strip_from_output": lang_token_ids}
-        return super(SpeechToTextCifMutiContrast, self).build_generator(
+        return super(SpeechToTextCifMutiContrastTask, self).build_generator(
             models, args, seq_gen_cls=None, extra_gen_cls_kwargs=extra_gen_cls_kwargs
         )
     
@@ -373,7 +382,7 @@ class SpeechToTextCifMutiContrast(FairseqTask):
                 utils.strip_pad(sample["target"][i], self.tgt_dict.pad()),
                 escape_unk=True
             )
-            if self.cfg.lang_prefix_token is not None:
+            if self.cfg.lang_prefix_tok is not None:
                 hyp = hyp.replace(self.cfg.lang_prefix_tok, "")
                 ref = ref.replace(self.cfg.lang_prefix_tok, "")
             hyps.append(hyp)
@@ -411,11 +420,44 @@ class SpeechToTextCifMutiContrast(FairseqTask):
         return self.tgt_dict
 
     def max_positions(self):
-        ...
+        return self.cfg.max_audio_positions, self.cfg.max_source_positions
     
     def reduce_metrics(self, logging_outputs, criterion):
         super().reduce_metrics(logging_outputs, criterion)
         if self.cfg.eval_bleu:
-            ...
+            def sum_logs(key):
+                if key in logging_outputs[0]:
+                    return sum(log[key].cpu().numpy() for log in logging_outputs)
+                return sum(log.get(key, 0) for log in logging_outputs)
+            
+            counts, totals = [], []
+            for i in range(EVAL_BLEU_ORDER):
+                counts.append(sum_logs("_bleu_counts_" + str(i)))
+                totals.append(sum_logs("_bleu_totals_" + str(i)))
+            if max(totals) > 0:
+                metrics.log_scalar("_bleu_counts", np.array(counts))
+                metrics.log_scalar("_bleu_totals", np.array(totals))
+                metrics.log_scalar("_bleu_sys_len", sum_logs("_bleu_sys_len"))
+                metrics.log_scalar("_bleu_ref_len", sum_logs("_bleu_ref_len"))
+                
+                def compute_bleu(meters):
+                    import inspect
+                    import sacrebleu
+
+                    fn_sig = inspect.getfullargspec(sacrebleu.compute_bleu)[0]
+                    if "smooth_method" in fn_sig:
+                        smooth = {"smooth_method": "exp"}
+                    else:
+                        smooth = {"smooth": "exp"}
+                    bleu = sacrebleu.compute_bleu(
+                        correct=meters["_bleu_counts"].sum,
+                        total=meters["_bleu_totals"].sum,
+                        sys_len=meters["_bleu_sys_len"].sum,
+                        ref_len=meters["_bleu_ref_len"].sum,
+                        **smooth
+                    )
+                    return round(bleu.score, 2)
+                metrics.log_derived("bleu", compute_bleu)
+                
 
         

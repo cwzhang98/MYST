@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import torch.nn.functional as F
 from fairseq import metrics, utils
 from fairseq.criterions import register_criterion
-from typing import List
+from typing import List, Optional
 
 from fairseq.criterions.label_smoothed_cross_entropy import (
     LabelSmoothedCrossEntropyCriterionConfig,
@@ -13,22 +13,20 @@ from fairseq.criterions.label_smoothed_cross_entropy import (
 )
 
 @dataclass
-class LabelSmoothedCrossEntropyWithIsoConstrastConfig(LabelSmoothedCrossEntropyCriterionConfig):
+class LabelSmoothedCrossEntropyWithIsoConstrastConfig(
+    LabelSmoothedCrossEntropyCriterionConfig
+):
     contrastive_weight: float = field(
         default=1.0,
         metadata={"help": "the weight of contrastive loss"}
-    )
-    fine_contrastive_weight: float = field (
-        default=0.5,
-        metadata={"help": "if `muti_contrast` set to true; assign weight of fine contrastive loss; corase=1-fine"}
     )
     muti_contrast: bool = field(
         default=True,
         metadata={"help": "muti grained contrastive loss"}
     )
-    contrast_granularity: str = field(
+    contrast_granularity: Optional[str] = field(
         default=None,
-        metadata={"if `muti_contrast` set to False, assign granularity of single loss, could be `fine` or `coarse`"}
+        metadata={"help": "if `muti_contrast` set to False, assign granularity of single loss, could be `fine` or `coarse`"}
     )
     use_muti_layer_repr_for_contrast: bool = field(
         default=False,
@@ -43,18 +41,18 @@ class LabelSmoothedCrossEntropyWithIsoConstrastConfig(LabelSmoothedCrossEntropyC
         default=False,
         metadata={"help": "if we want to use dual contrastive loss"}
     )
-    
-    ctr_dropout_rate: float = field(
-        default=0.0,
-        metadata={"help": "the dropout rate of token level repr"}
-    )
-    iso_transform: str = field(
+    iso_transform: Optional[str] = field(
         default=None,
         metadata={"help": "appaoach to transform aniso distributed repr to iso"}
     )
 
-@register_criterion("label_smoothed_cross_entropy_with_iso_contrast", dataclass=LabelSmoothedCrossEntropyWithIsoConstrastConfig)
-class LabelSmoothedCrossEntropyWithIsoConstrast(LabelSmoothedCrossEntropyCriterion):
+@register_criterion(
+    "label_smoothed_cross_entropy_with_iso_contrast", 
+    dataclass=LabelSmoothedCrossEntropyWithIsoConstrastConfig
+)
+class LabelSmoothedCrossEntropyWithIsoConstrast(
+    LabelSmoothedCrossEntropyCriterion
+):
     def __init__(
         self,
         task,
@@ -68,7 +66,6 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(LabelSmoothedCrossEntropyCriteri
         use_muti_layer_repr_for_contrast=False,
         contrastive_temperature=1.0,
         use_dual_ctr=False,
-        ctr_dropout_rate=0.0,
         iso_transform=None,
     ):
         super().__init__(task, sentence_avg, label_smoothing, ignore_prefix_size, report_accuracy)
@@ -78,7 +75,6 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(LabelSmoothedCrossEntropyCriteri
         self.use_muti_layer_repr_for_contrast = use_muti_layer_repr_for_contrast
         self.contrastive_temperature = contrastive_temperature
         self.use_dual_ctr = use_dual_ctr
-        self.ctr_dropout_rate = ctr_dropout_rate
         self.iso_transform = iso_transform
     
     def forward(self, model, sample, reduce=True):
@@ -107,7 +103,7 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(LabelSmoothedCrossEntropyCriteri
             
             # contrastive loss
             audio_embedding = encoder_out["encoder_embedding"]
-            audio_padding_mask = encoder_out["encoder_padding_mask"]
+            audio_padding_mask = encoder_out["encoder_padding_mask"][0]
             aduio_encoder_states = encoder_out["shared_encoder_states"]
             if self.muti_contrast:
                 fine_contrast_loss, coarse_contrast_loss = self.compute_contrastive_loss(
@@ -162,20 +158,29 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(LabelSmoothedCrossEntropyCriteri
             sample_size: sample_size,
         }
         if self.report_accuracy:
-            n_correct, total = self.compute_accuracy(model, net_output, sample)
+            n_correct, total = self.compute_accuracy(model, decoder_out, sample)
             logging_output["n_correct"] = utils.item(n_correct.data)
             logging_output["total"] = utils.item(total.data)
         return loss, sample_size, logging_output
     
     def get_lprobs_and_target(self, model, net_output, sample):
-        probs = model.get_normalized_probs(net_output, log_probs=True)
-        lprobs = probs.log()
+        probs = model.get_normalized_probs(net_output, log_probs=False)
         target = model.get_targets(sample, net_output).long()
         if self.ignore_prefix_size > 0:
             # lprobs: B x T x C
-            lprobs = lprobs[:, self.ignore_prefix_size :, :].contiguous()
-            target = target[:, self.ignore_prefix_size :].contiguous()
+            probs = probs[:, self.ignore_prefix_size:, :].contiguous()
+            target = target[:, self.ignore_prefix_size:].contiguous()
+        lprobs = probs.log()
         return lprobs.view(-1, lprobs.size(-1)), probs.view(-1, probs.size(-1)), target.view(-1)
+    
+    def compute_accuracy(self, model, net_output, sample):
+        lprobs, _, target = self.get_lprobs_and_target(model, net_output, sample)
+        mask = target.ne(self.padding_idx)
+        n_correct = torch.sum(
+            lprobs.argmax(1).masked_select(mask).eq(target.masked_select(mask))
+        )
+        total = torch.sum(mask)
+        return n_correct, total
     
     def compute_loss(self, model, net_output, sample, reduce=True):
         lprobs, probs, target = self.get_lprobs_and_target(model, net_output, sample)
@@ -196,15 +201,16 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(LabelSmoothedCrossEntropyCriteri
             is_audio_input=False
         )
         text_embedding = encoder_out["encoder_embedding"]
-        text_padding_mask = encoder_out["encoder_padding_mask"]
+        text_padding_mask = encoder_out["encoder_padding_mask"][0]
         text_encoder_states = encoder_out["shared_encoder_states"]
         probs = model.get_normalized_probs(decoder_out, log_probs=False)
-        lprobs = probs.log()
         target = model.get_targets(sample, decoder_out)
         if self.ignore_prefix_size > 0:
-            lprobs = lprobs[:, self.ignore_prefix_size:, :].contiguous()
+            probs = probs[:, self.ignore_prefix_size:, :].contiguous()
             target = target[:, self.ignore_prefix_size:].contiguous()
+        lprobs = probs.log()
         lprobs = lprobs.view(-1, lprobs.size(-1))
+        probs = probs.view(-1, lprobs.size(-1))
         target = target.view(-1)
         loss, nll_loss = label_smoothed_nll_loss(
             lprobs, target, self.eps, ignore_index=self.padding_idx, reduce=reduce
@@ -260,23 +266,27 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(LabelSmoothedCrossEntropyCriteri
         fine_loss, coarse_loss = torch.tensor(0.0), torch.tensor(0.0)
         if muti_contrast or contrast_granularity == "fine":# word level loss
             # remove lang tag feature
-            text_embedding, text_padding_mask = text_embedding[:, 1:, :], text_padding_mask[:, 1:, :]
+            text_embedding, text_padding_mask = text_embedding[:, 1:, :], text_padding_mask[:, 1:]
             # flatten feats and padding masks
-            audio_embedding = audio_embedding.transpose(0, 1).view(-1, audio_embedding.size(-1))
-            text_embedding = text_embedding.transpose(0, 1).view(-1, text_embedding.size(-1))
-            audio_padding_mask = audio_padding_mask.view(-1).expand((-1, audio_embedding.size(-1)))
-            text_padding_mask = text_padding_mask.view(-1).expand((-1, text_embedding.size(-1)))
+            audio_embedding = audio_embedding.transpose(0, 1) \
+                            .contiguous() \
+                            .view(-1, audio_embedding.size(-1))
+            text_embedding = text_embedding.transpose(0, 1) \
+                            .contiguous() \
+                            .view(-1, text_embedding.size(-1))
+            audio_padding_mask = audio_padding_mask.contiguous().view(-1)
+            text_padding_mask = text_padding_mask.contiguous().view(-1)
             # selet feats according to mask
-            audio_index = torch.nonzero((~audio_padding_mask).int())
-            text_index = torch.nonzero((~text_padding_mask).int())
-            audio_feats = audio_embedding.index_select(0, audio_index) # (B x T) x C
-            text_feats = text_embedding.index_select(0, text_index)
+            audio_index = torch.nonzero((~audio_padding_mask).int(), as_tuple=True)
+            text_index = torch.nonzero((~text_padding_mask).int(), as_tuple=True)
+            audio_feats = audio_embedding.index_select(0, audio_index[0]) # (B x T) x C
+            text_feats = text_embedding.index_select(0, text_index[0])
             # audio feats length equals to text feats length minus 1
             assert audio_feats.size(0) == text_feats.size(0)
             feats_length, hidden_size = audio_feats.size()
             sim_matrix = F.cosine_similarity(
-                audio_feats.expand((feats_length, feats_length, hidden_size)),
-                text_feats.expand((feats_length, feats_length, hidden_size)).transpose(0, 1),
+                audio_feats.expand(feats_length, feats_length, hidden_size),
+                text_feats.expand(feats_length, feats_length, hidden_size).transpose(0, 1),
                 dim=-1
             )
             sim_matrix /= self.contrastive_weight
@@ -295,8 +305,8 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(LabelSmoothedCrossEntropyCriteri
             text_sentence_repr = self.get_sentence_repr(text_encoder_states, text_padding_mask)
             batch_size, hidden_size = audio_sentence_repr.size()
             sim_matrix = F.cosine_similarity(
-                audio_sentence_repr.expand((batch_size, batch_size, hidden_size)),
-                text_sentence_repr.expand((batch_size, batch_size, hidden_size)).transpose(0, 1),
+                audio_sentence_repr.expand(batch_size, batch_size, hidden_size),
+                text_sentence_repr.expand(batch_size, batch_size, hidden_size).transpose(0, 1),
                 dim=-1
             )
             sim_matrix /= self.contrastive_weight
@@ -341,6 +351,8 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(LabelSmoothedCrossEntropyCriteri
                            nll_loss_mt_sum / target_ntokens / math.log(2), sample_size, round=3)
         metrics.log_scalar("contrasitve_loss",
                            contrastive_loss_sum / sample_size / math.log(2), sample_size, round=3)
+        metrics.log_scalar("jsd_loss",
+                           jsd_loss_sum / sample_size / math.log(2), sample_size, round=3)
         if fine_contrast_loss_sum > 0:
             metrics.log_scalar("fine_contrast_loss", 
                                contrastive_loss_sum / sample_size / math.log(2),

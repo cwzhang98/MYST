@@ -11,3 +11,4 @@ from .s2t_transformer import *  # noqa
 from .s2t_wav_transformer import *  # noqa
 from .xm_transformer import *  # noqa
 from .xm_transformer_unity import *  # noqa
+from .s2t_transformer_with_cif_contrast import *

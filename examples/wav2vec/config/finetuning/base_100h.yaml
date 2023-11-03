@@ -5,6 +5,7 @@ common:
   log_format: json
   log_interval: 100
   tensorboard_logdir: /home2/cwzhang98/project/MYST/audio_cif_pt_log
+
 checkpoint:
   save_dir: /home2/cwzhang98/project/MYST/checkpoint
   restore_file: /home2/cwzhang98/project/MYST/checkpoint/checkpoint_last.pt

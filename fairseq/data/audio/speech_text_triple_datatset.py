@@ -61,7 +61,7 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
 
     def check_src_lang_tag(self):
         # prepend_src_lang_tag: True, see prep_mustc_data.py
-        if self.data_cfg.prepend_src_lang_tag:
+        if self.cfg.prepend_src_lang_tag:
             assert self.src_langs is not None and self.src_dict is not None
             # ['<lang:en>']
             src_lang_tags = [
@@ -88,30 +88,31 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
             # use_audio_input: True/False: get waveform/features
             # in this case of ConST, get waveform
             audio = get_features_or_waveform(
-                self.audio_paths[index], need_waveform=self.data_cfg.use_audio_input
+                self.audio_paths[index], need_waveform=self.cfg.use_audio_input
             )
             if self.feature_transforms is not None:
                 # could implement data augment here, but no transform was assign in ConST
-                assert not self.data_cfg.use_audio_input
+                assert not self.cfg.use_audio_input
                 audio = self.feature_transforms(audio)
             if isinstance(audio, np.ndarray):  # if audio is get form .npy file
                 audio = torch.from_numpy(audio).float()
-            if self.data_cfg.use_audio_input:  # if audio is waveform
+            if self.cfg.use_audio_input:  # if audio is waveform
                 audio = audio.squeeze(0)
 
         src_text = None
         if self.src_texts is not None:
+            tokenized = self.src_texts[index]
             # tokenize text through pre_tokenizer(here is None) and bpe_tokenizer
             if self.pre_tokenizer is not None:
-                tokenized = self.tokenize(self.src_texts[index], self.pre_tokenizer)
+                tokenized = self.tokenize(self.pre_tokenizer, self.src_texts[index])
             if self.bpe_tokenizer is not None:
-                tokenized = self.tokenize(tokenized, self.bpe_tokenizer)
+                tokenized = self.tokenize(self.bpe_tokenizer, tokenized)
             # encode tokenized text use fairseq.Dictionary.encode_line(), return 1-d int tensor, convert to long tensor
             src_text = self.src_dict.encode_line(
                 tokenized, add_if_not_exist=False, append_eos=True
             ).long()
             # prepend source lang tag
-            if self.data_cfg.prepend_src_lang_tag:
+            if self.cfg.prepend_src_lang_tag:
                 # get tag
                 lang_tag = self.LANG_TAG_TEMPLATE.format(self.src_langs[index])
                 # get index of tag in dict
@@ -121,15 +122,16 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
         # process target txt same as above
         tgt_text = None
         if self.tgt_texts is not None:
+            tokenized = self.tgt_texts[index]
             if self.pre_tokenizer is not None:
-                tokenized = self.tokenize(self.tgt_texts[index], self.pre_tokenizer)
+                tokenized = self.tokenize(self.pre_tokenizer, self.tgt_texts[index])
             if self.bpe_tokenizer is not None:
-                tokenized = self.tokenize(tokenized, self.bpe_tokenizer)
+                tokenized = self.tokenize(self.bpe_tokenizer, tokenized)
             # tokenized = self.tokenize_text(self.tgt_texts[index])
             tgt_text = self.tgt_dict.encode_line(
                 tokenized, add_if_not_exist=False, append_eos=True
             ).long()
-            if self.data_cfg.prepend_tgt_lang_tag:
+            if self.cfg.prepend_tgt_lang_tag:
                 lang_tag = self.LANG_TAG_TEMPLATE.format(self.tgt_langs[index])
                 lang_tag_idx = self.tgt_dict.index(lang_tag)
                 tgt_text = torch.cat((torch.LongTensor([lang_tag_idx]), tgt_text), 0)
@@ -147,7 +149,7 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
         if self.dataset_type == "st":
             # get a batched 2D padded audio Tensor
             frames = _collate_frames(
-                [s for _, s, _, _ in samples], self.data_cfg.use_audio_input
+                [s for _, s, _, _ in samples], self.cfg.use_audio_input
             )
             # sort samples by descending number of frames
             n_frames = torch.tensor([s.size(0) for _, s, _, _ in samples], dtype=torch.long)
@@ -222,7 +224,7 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
                 "src_lengths": n_frames,
                 "prev_output_tokens": prev_output_target_tokens,
                 # subtract lang tag length, num of fires only depends on real text length
-                "transcript_lengths": source_lengths - torch.tensor(1)
+                "transcript_lengths": source_lengths - 1
             },
             "target": target, # target text
             "target_lengths": target_lengths,
@@ -311,8 +313,6 @@ class SpeechTextTripleDatasetCreator(SpeechToTextDatasetCreator):
                 reader = csv.DictReader(f, delimiter="\t", quotechar=None,
                                         doublequote=False, lineterminator="\n",
                                         quoting=csv.QUOTE_NONE)
-                # append a list into sample list, now samples is a 2-dim list, number of 1st dim represents the
-                # number of splits
                 samples.append([dict(e) for e in reader])
                 assert len(samples) > 0
         # name: str, s: list

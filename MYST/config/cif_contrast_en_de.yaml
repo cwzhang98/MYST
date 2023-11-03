@@ -1,0 +1,103 @@
+common:
+  fp16: true
+  log_format: json
+  log_interval: 100
+  tensorboard_logdir: /home2/cwzhang98/project/MYST/train_log
+
+checkpoint:
+  save_dir: /home2/cwzhang98/project/MYST/checkpoint
+  restore_file: /home2/cwzhang98/project/MYST/checkpoint/checkpoint_last.pt
+  no_epoch_checkpoints: true
+  best_checkpoint_metric: bleu
+  maximize_best_checkpoint_metric: true
+  patience: 10
+
+task:
+  _name: speech_to_text_cif_muti_contrast
+  data: ???
+  config_yaml: /home2/cwzhang98/project/dataset/MuSTC/en-de/config_st.yaml
+  eval_bleu: true
+  eval_bleu_detok: moses
+  eval_tokenized_bleu: false
+  eval_bleu_bpe: sentencepiece
+  eval_bleu_remove_bpe: sentencepiece
+  eval_bleu_args: '{"beam": 5, "prefix_size": 1, "lenpen": 0.6}'
+  eval_bleu_print_samples: true
+
+criterion:
+  _name: label_smoothed_cross_entropy_with_iso_contrast
+  label_smoothing: 0.1
+  report_accuracy: true
+  ignore_prefix_size: 1
+  sentence_avg: true
+  contrastive_weight: 1.0
+  muti_contrast: true
+  use_muti_layer_repr_for_contrast: true # indice of layers set in model config
+  contrastive_temperature: 0.02
+  use_dual_ctr: true
+  
+
+model:
+  _name: s2t_transformer_with_cif_contrast
+  w2v_cif_model_path: /home2/cwzhang98/project/MYST/checkpoints/checkpoint_best.pt
+  freeze_w2v: true
+  activation_fn: relu
+  dropout: 0.1
+  attention_dropout: 0.1
+  activation_dropout: 0.1
+  encoder_layers: 6
+  encoder_embed_dim: 512
+  encoder_ffn_embed_dim: 2048
+  encoder_attention_heads: 8
+  encoder_normalize_before: true
+  no_positional_embeddings: false
+  encoder_learned_pos: false
+  textual_encoder_hidden_state: 4,5
+  decoder_layers: 6
+  decoder_embed_dim: 512
+  decoder_ffn_embed_dim: 2048
+  decoder_attention_heads: 8
+  decoder_normalize_before: true
+  share_decoder_input_output_embed: true
+  layernorm_embedding: true
+  no_scale_embedding: false
+
+dataset:
+  num_workers: 8
+  max_tokens: 1_000_000
+  train_subset: train_st
+  valid_subset: dev_st
+  update_epoch_batch_itr: false
+
+distributed_training:
+  ddp_backend: no_c10d # same as legacy_ddp
+  distributed_world_size: 1
+
+optimization:
+  max_update: 500000
+  clip_norm: 10.0
+  lr: [1e-4]
+  sentence_avg: true
+  update_freq: [2]
+
+optimizer:
+  _name: adam
+  adam_betas: (0.9,0.98)
+  adam_eps: 1e-08
+
+lr_scheduler:
+  _name: inverse_sqrt
+  warmup_updates: 25_000
+
+
+
+
+
+
+
+
+
+
+  
+
+

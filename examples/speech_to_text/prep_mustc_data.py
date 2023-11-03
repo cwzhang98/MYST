@@ -156,8 +156,8 @@ def process(args):
             cur_root / spm_filename_prefix,
             args.vocab_type,
             args.vocab_size,
-            special_symbols=["<lang:en>", f"<lang:{lang}>"],
-            accept_language=["en", f"{lang}"]
+            special_symbols=[f"<lang:{lang}>"],
+            accept_language=[f"{lang}"]
         )
     # Generate config YAML
     gen_config_yaml(
@@ -165,8 +165,8 @@ def process(args):
         args.lang,
         spm_filename_prefix + ".model",
         yaml_filename=f"config_st.yaml",
-        prepend_tgt_lang_tag=False,
-        prepend_src_lang_tag=False
+        prepend_tgt_lang_tag=True,
+        prepend_src_lang_tag=True
     )
 
 

@@ -165,7 +165,7 @@ def gen_config_yaml(
     )
     writer.set_prepend_tgt_lang_tag(prepend_tgt_lang_tag)
     writer.set_prepend_src_lang_tag(prepend_src_lang_tag)
-
+    writer.set_use_audio_input(True)
     writer.set_shuffle_dataset(True)
     writer.set_language_pair(f"en-{lang}")
     writer.flush()
@@ -357,6 +357,9 @@ class S2TDataConfigWriter(object):
 
     def set_language_pair(self, language_pair="en-de"):
         self.config["language_pair"] = language_pair
-
+    
     def set_shuffle_dataset(self, flag=True):
         self.config["shuffle"] = flag
+    
+    def set_use_audio_input(self, flag=True):
+        self.config["use_audio_input"] = flag

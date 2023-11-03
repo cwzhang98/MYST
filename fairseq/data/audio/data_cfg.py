@@ -81,12 +81,17 @@ class S2TDataConfig(object):
         return self._auto_convert_to_abs_path(tokenizer)
 
     @property
+    def language_pair(self) -> str:
+        return self.config.get("language_pair", "en-de")
+    
+    @property
     def prepend_tgt_lang_tag(self) -> bool:
         """Prepend target lang ID token as the target BOS (e.g. for to-many
         multilingual setting). During inference, this requires `--prefix-size 1`
         to force BOS to be lang ID token."""
         return self.config.get("prepend_tgt_lang_tag", False)
-    
+
+    @property
     def prepend_src_lang_tag(self) -> bool:
         return self.config.get("prepend_src_lang_tag", False)
 

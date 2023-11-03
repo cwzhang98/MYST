@@ -4,6 +4,10 @@ import re
 
 
 def main():
+    """
+    numbers in a dataset should less than 33 digits,
+    so that g2p_encode.py can generate phoneme from it.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", "-d", required=True, type=str)
     args = parser.parse_args()

@@ -8,6 +8,7 @@ import copy
 import logging
 import math
 import re
+from omegaconf import OmegaConf
 from argparse import Namespace
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -242,10 +243,12 @@ class Wav2VecCtc(BaseFairseqModel):
         return state_dict
 
     @classmethod
-    def build_model(cls, cfg: Wav2Vec2AsrConfig, task: FairseqTask):
+    def build_model(cls, cfg: Wav2Vec2AsrConfig, dictionary):
         """Build a new model instance."""
+        if isinstance(cfg, dict):
+            cfg = Wav2Vec2AsrConfig(**cfg)
         w2v_encoder = Wav2VecEncoder(cfg)
-        return cls(cfg, w2v_encoder, len(task.target_dictionary))
+        return cls(cfg, w2v_encoder, len(dictionary))
     
     def _build_cif(self, cfg):
         self.cif_layer = CIFLayer(cfg)
@@ -299,6 +302,10 @@ class Wav2VecCtc(BaseFairseqModel):
         )
         return cif_out["cif_out"][0], cif_out["cif_length"][0] # cif aggraved features
 
+    def remove_pretrain_modules(self):
+        self.ctc_proj = None
+        self.cif_proj = None
+    
     def forward(self, transcript_lengths, source, padding_mask, **kwargs):
         x = self.w2v_encoder(source, padding_mask, **kwargs)
 
@@ -370,6 +377,8 @@ class Wav2VecEncoder(FairseqEncoder):
         else: # in ST fine tune, pass the checkpoint args
             state = None
             w2v_args = cfg.w2v_args
+            if isinstance(w2v_args, dict):
+                cfg.w2v_args = w2v_args = OmegaConf.create(w2v_args)
             if isinstance(w2v_args, Namespace): # cfg should be instance of Namespace
                 cfg.w2v_args = w2v_args = convert_namespace_to_omegaconf(w2v_args)
 
