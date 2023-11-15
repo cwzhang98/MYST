@@ -9,7 +9,6 @@ import os
 import sys
 import time
 import io
-import csv
 
 import numpy as np
 import torch
@@ -149,10 +148,7 @@ class RawAudioDataset(FairseqDataset):
         input = {"source": collated_sources}
         if self.corpus_key is not None:
             input["corpus_key"] = [self.corpus_key] * len(sources)
-        out = {
-            "id": torch.LongTensor([s["id"] for s in samples]),
-            "source_lengths": torch.LongTensor(sizes)
-        }
+        out = {"id": torch.LongTensor([s["id"] for s in samples])}
         if self.pad:
             input["padding_mask"] = padding_mask
 
@@ -349,45 +345,6 @@ class FileAudioDataset(RawAudioDataset):
 
         return v
 
-class MUSTCAudioDataset(FairseqDataset):
-    def __init__(
-            self,
-            manifest_path,
-            sample_rate,
-            max_sample_size=None,
-            min_sample_size=0,
-            shuffle=True,
-            pad=False,
-            normalize=False,
-            compute_mask=False,
-            epoch=1,
-            **mask_compute_kwargs,
-        ):
-        super().__init__()
-        samples = []
-        if not os.path.isfile(manifest_path):
-            raise FileNotFoundError(f"Dataset not found: {manifest_path}")
-        with open(manifest_path) as f:
-            reader = csv.DictReader(f, delimiter="\t", quotechar=None, doublequote=False,
-                                    lineterminator="\n", quoting=csv.QUOTE_NONE)
-            samples = [dict[e] for e in reader]
-        # fields corresponding to tsv columns
-        self.audio_paths, self.n_frames, self.src_texts = [], [], []
-        self.tgt_texts, self.ids, self.speakers =  [], [], []
-        
-        for sample in samples:
-            self.ids.append(sample.get("id", None))
-            self.audio_paths.append(sample.get("audio", None))
-            self.n_frames.append(sample.get("n_frames", None))
-            self.speakers.append(sample.get("speaker", None))
-            self.src_texts.append(sample.get("src_text", None))
-            self.tgt_texts.append(sample.get("tgt_text", None))
-        
-    def __getitem__(self, index):
-        return super().__getitem__(index)
-    
-    def collater(self, samples):
-        return super().collater(samples)
 
 class BinarizedAudioDataset(RawAudioDataset):
     def __init__(

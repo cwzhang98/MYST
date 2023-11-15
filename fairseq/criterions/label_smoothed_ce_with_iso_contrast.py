@@ -83,23 +83,33 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
         fine_contrast_loss, coarse_contrast_loss = torch.tensor(0.0), torch.tensor(0.0)
         label_smoothed_nll_loss, nll_loss = torch.tensor(0.0), torch.tensor(0.0)
         label_smoothed_nll_loss_mt, nll_loss_mt = torch.tensor(0.0), torch.tensor(0.0)
-        jsd_loss = torch.tensor(0.0)
-        decoder_out, encoder_out = net_output # encoder output include audio and textual encoder
-        
+        jsd_loss, qua_loss = torch.tensor(0.0), torch.tensor(0.0)
+                
         if model.training:
-            # muti task loss and jsd loss
-            if sample["target"] is not None:
-                # st cross entropy
-                label_smoothed_nll_loss, nll_loss, lprobs_st, probs_st, target = self.compute_loss(
-                    model, decoder_out, sample, reduce=reduce
-                )
-                # mt cross entropy
-                label_smoothed_nll_loss_mt, nll_loss_mt, lprobs_mt, probs_mt, \
-                text_embedding, text_padding_mask, text_encoder_states = self.compute_loss_mt(
-                    model, sample, reduce=True
-                )
-                lprobs_mix = 0.5 * (lprobs_st + lprobs_mt)
-                jsd_loss = self.compute_loss_jsd(lprobs_mix, probs_st, probs_mt, target, reduce=reduce)
+            decoder_out, encoder_out = net_output # encoder output include audio and textual encoder
+        else:
+            decoder_out = net_output
+        # muti task loss
+        if sample["target"] is not None:
+            # st cross entropy
+            label_smoothed_nll_loss, nll_loss, lprobs_st, probs_st, target = self.compute_loss(
+                model, decoder_out, sample, reduce=reduce
+            )
+            # mt cross entropy
+            label_smoothed_nll_loss_mt, nll_loss_mt, lprobs_mt, probs_mt, \
+            text_embedding, text_padding_mask, text_encoder_states = self.compute_loss_mt(
+                model, sample, reduce=True
+            )
+        if model.training:
+            # qua loss
+            if sample["net_input"]["transcript_lengths"] is not None:
+                alpha_sum = torch.sum(encoder_out["alpha"], dim=-1) \
+                    / model.encoder.w2v_cif_model.beta
+                target_lengths = sample["target_lengths"].type_as(alpha_sum)
+                qua_loss = F.l1_loss(alpha_sum, target_lengths, reduction='sum')
+            # jsd loss
+            lprobs_mix = 0.5 * (lprobs_st + lprobs_mt)
+            jsd_loss = self.compute_loss_jsd(lprobs_mix, probs_st, probs_mt, target, reduce=reduce)
             
             # contrastive loss
             audio_embedding = encoder_out["encoder_embedding"]
@@ -116,8 +126,9 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
                     reduce=reduce,
                     muti_contrast=True
                 )
+                contrastive_loss = fine_contrast_loss + coarse_contrast_loss
             else:
-                contrast_loss = self.compute_contrastive_loss(
+                contrastive_loss = self.compute_contrastive_loss(
                     audio_embedding,
                     audio_padding_mask,
                     aduio_encoder_states,
@@ -130,32 +141,26 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
                 )
         else:
             contrastive_loss = torch.tensor(0.0)
-            decoder_out = net_output
-
         
         muti_task_ce_loss = label_smoothed_nll_loss + label_smoothed_nll_loss_mt
         sample_size = sample["target"].size(0) if self.sentence_avg else sample["target_ntokens"]
         
-        # sum different losses
-        if self.muti_contrast:
-            loss = muti_task_ce_loss + jsd_loss + self.contrastive_weight * \
-                (fine_contrast_loss + coarse_contrast_loss)
-        else:
-            loss = label_smoothed_nll_loss + jsd_loss + self.contrastive_weight * contrast_loss
-        
+        loss = muti_task_ce_loss + jsd_loss + self.contrastive_weight * contrastive_loss + qua_loss
+
         logging_output = {
             "loss": loss.data,
             "nll_loss": nll_loss.data, # st nll loss
             "nll_loss_mt": nll_loss_mt.data,
-            "jsd_loss": jsd_loss.data,
-            "contrastive_loss": contrastive_loss.data if not self.muti_contrast else None,
-            "fine_contrast_loss": fine_contrast_loss.data if self.muti_contrast else None,
-            "coarse_contrast_loss": coarse_contrast_loss.data if self.muti_contrast else None,
+            "jsd_loss": jsd_loss.data, # 0, if not training
+            "qua_loss": qua_loss.data, # 0, if not training
+            "contrastive_loss": contrastive_loss.data,
+            "fine_contrast_loss": fine_contrast_loss.data,
+            "coarse_contrast_loss": coarse_contrast_loss.data,
             "ntokens": sample["target_ntokens"],
             "source_ntokens": sample["source_ntokens"], # num of mt src token in a batch 
             "target_tokens": sample["target_ntokens"], # num of tgt token in a batch
             "nsentences": sample["nsentences"],
-            sample_size: sample_size,
+            "sample_size": sample_size,
         }
         if self.report_accuracy:
             n_correct, total = self.compute_accuracy(model, decoder_out, sample)
@@ -239,7 +244,7 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
         if self.use_muti_layer_repr_for_contrast:
             assert len(encoder_states_list) > 1, \
             "mutipule layer hidden states are required"
-            seq_hidden = encoder_states_list.new_zeros((B, C))
+            seq_hidden = encoder_states_list[0].new_zeros((B, C))
             for states in encoder_states_list:
                 states = states.transpose(0, 1)
                 seq_hidden += (states * padding_mask.unsqueeze(-1)).sum(1) \
@@ -254,10 +259,10 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
     def compute_contrastive_loss(
         self,
         audio_embedding, # T x B x C
-        audio_padding_mask,
+        audio_padding_mask, # B x T
         aduio_encoder_states, # T x B x C
-        text_embedding,
-        text_padding_mask,
+        text_embedding, # T x B x C
+        text_padding_mask, # B x T
         text_encoder_states,
         reduce=True,
         muti_contrast=False,
@@ -266,7 +271,7 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
         fine_loss, coarse_loss = torch.tensor(0.0), torch.tensor(0.0)
         if muti_contrast or contrast_granularity == "fine":# word level loss
             # remove lang tag feature
-            text_embedding, text_padding_mask = text_embedding[:, 1:, :], text_padding_mask[:, 1:]
+            text_embedding, _text_padding_mask = text_embedding[1:, :, :], text_padding_mask[:, 1:]
             # flatten feats and padding masks
             audio_embedding = audio_embedding.transpose(0, 1) \
                             .contiguous() \
@@ -274,33 +279,35 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
             text_embedding = text_embedding.transpose(0, 1) \
                             .contiguous() \
                             .view(-1, text_embedding.size(-1))
-            audio_padding_mask = audio_padding_mask.contiguous().view(-1)
-            text_padding_mask = text_padding_mask.contiguous().view(-1)
+            audio_padding_mask_flat = audio_padding_mask.contiguous().view(-1)
+            text_padding_mask_flat = _text_padding_mask.contiguous().view(-1)
             # selet feats according to mask
-            audio_index = torch.nonzero((~audio_padding_mask).int(), as_tuple=True)
-            text_index = torch.nonzero((~text_padding_mask).int(), as_tuple=True)
+            audio_index = torch.nonzero((~audio_padding_mask_flat).int(), as_tuple=True)
+            text_index = torch.nonzero((~text_padding_mask_flat).int(), as_tuple=True)
             audio_feats = audio_embedding.index_select(0, audio_index[0]) # (B x T) x C
             text_feats = text_embedding.index_select(0, text_index[0])
             # audio feats length equals to text feats length minus 1
             assert audio_feats.size(0) == text_feats.size(0)
             feats_length, hidden_size = audio_feats.size()
             sim_matrix = F.cosine_similarity(
-                audio_feats.expand(feats_length, feats_length, hidden_size),
-                text_feats.expand(feats_length, feats_length, hidden_size).transpose(0, 1),
+                audio_feats.expand(
+                feats_length, feats_length, hidden_size).float(),
+                text_feats.expand(
+                feats_length, feats_length, hidden_size).transpose(0, 1).float(),
                 dim=-1
             )
-            sim_matrix /= self.contrastive_weight
+            sim_matrix /= self.contrastive_temperature
             if self.use_dual_ctr:
                 fine_loss = 0.5 * (
                     -torch.nn.LogSoftmax(0)(sim_matrix).diag() + \
                     -torch.nn.LogSoftmax(1)(sim_matrix).diag()
                 )
-            else: 
-                fine_loss = -torch.nn.LogSoftmax(1)(sim_matrix).diag()
+            else:
+                fine_loss = -torch.nn.LogSoftmax(0)(sim_matrix).diag()
             if reduce:
                 fine_loss = fine_loss.sum()
 
-        elif muti_contrast or contrast_granularity == "coarse":# sentence level loss
+        if muti_contrast or contrast_granularity == "coarse":# sentence level loss
             audio_sentence_repr = self.get_sentence_repr(aduio_encoder_states, audio_padding_mask)
             text_sentence_repr = self.get_sentence_repr(text_encoder_states, text_padding_mask)
             batch_size, hidden_size = audio_sentence_repr.size()
@@ -309,17 +316,17 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
                 text_sentence_repr.expand(batch_size, batch_size, hidden_size).transpose(0, 1),
                 dim=-1
             )
-            sim_matrix /= self.contrastive_weight
+            sim_matrix /= self.contrastive_temperature
             if self.use_dual_ctr:
                  coarse_loss = 0.5 * (
                     -torch.nn.LogSoftmax(0)(sim_matrix).diag() + \
                     -torch.nn.LogSoftmax(1)(sim_matrix).diag()
                  )
             else:
-                coarse_loss = -torch.nn.LogSoftmax(1)(sim_matrix).diag()
+                coarse_loss = -torch.nn.LogSoftmax(0)(sim_matrix).diag()
             if reduce:
                 coarse_loss = coarse_loss.sum()
-        else:
+        if not muti_contrast and contrast_granularity not in {"fine", "coarse"}:
             raise Exception("if muti_contrast set to False, "
                             "contrast_granularity should be `fine` or `coarse`") 
         if muti_contrast:
@@ -338,6 +345,7 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
         fine_contrast_loss_sum = sum(log.get("fine_contrast_loss", 0) for log in logging_outputs)
         coarse_contrast_loss_sum = sum(log.get("coarse_contrast_loss", 0) for log in logging_outputs)        
         jsd_loss_sum = sum(log.get("jsd_loss", 0) for log in logging_outputs)
+        qua_loss_sum = sum(log.get("qua_loss", 0) for log in logging_outputs)
         source_ntokens = sum(log.get("source_ntokens", 0) for log in logging_outputs)
         target_ntokens = sum(log.get("target_ntokens", 0) for log in logging_outputs)
         nsentences = sum(log.get("nsentences", 0) for log in logging_outputs)
@@ -346,13 +354,15 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
         metrics.log_scalar("loss",
                            loss_sum / sample_size / math.log(2), sample_size, round=3)
         metrics.log_scalar("nll_loss_st",
-                           nll_loss_st_sum / target_ntokens / math.log(2), sample_size, round=3)
+                           nll_loss_st_sum / sample_size / math.log(2), sample_size, round=3)
         metrics.log_scalar("nll_loss_mt",
-                           nll_loss_mt_sum / target_ntokens / math.log(2), sample_size, round=3)
+                           nll_loss_mt_sum / sample_size / math.log(2), sample_size, round=3)
         metrics.log_scalar("contrasitve_loss",
                            contrastive_loss_sum / sample_size / math.log(2), sample_size, round=3)
         metrics.log_scalar("jsd_loss",
                            jsd_loss_sum / sample_size / math.log(2), sample_size, round=3)
+        metrics.log_scalar("qua_loss",
+                    qua_loss_sum / sample_size / math.log(2), sample_size, round=3)
         if fine_contrast_loss_sum > 0:
             metrics.log_scalar("fine_contrast_loss", 
                                contrastive_loss_sum / sample_size / math.log(2),

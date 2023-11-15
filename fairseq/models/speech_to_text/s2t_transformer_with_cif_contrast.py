@@ -219,7 +219,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
     
     def encode_audio(self, src_tokens, src_lengths, transcript_lengths=None):
         padding_mask = lengths_to_padding_mask(src_lengths)
-        w2v_feature, feature_lengths = self.w2v_cif_model.extract_features(
+        w2v_feature, feature_lengths, alpha = self.w2v_cif_model.extract_features(
             transcript_lengths, src_tokens, padding_mask, self.freeze_w2v
         )
         encoder_padding_mask = lengths_to_padding_mask(feature_lengths)
@@ -228,7 +228,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             w2v_feature += positions
         w2v_feature = w2v_feature.transpose(0, 1) # B x T x C -> T x B x C
          
-        return w2v_feature, encoder_padding_mask
+        return w2v_feature, encoder_padding_mask, alpha
 
     def encode_text(self, src_tokens):
         embedding = self.embed_tokens(src_tokens)
@@ -255,7 +255,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             src_lengths:(B)
         """
         if is_audio_input: # forward audio
-            x, encoder_padding_mask = self.encode_audio(
+            x, encoder_padding_mask, alpha = self.encode_audio(
                 src_tokens, src_lengths, transcript_lengths.squeeze(-1))
         else: # forward text
             x, encoder_padding_mask = self.encode_text(src_tokens)
@@ -283,5 +283,6 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             "encoder_states": None,
             "src_tokens": None,
             "src_lengths": None,
-            "shared_encoder_states": shared_encoder_states
+            "shared_encoder_states": shared_encoder_states,
+            "alpha": alpha if is_audio_input else None
         }

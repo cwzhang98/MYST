@@ -134,7 +134,7 @@ def process(args):
                 train_text.extend(manifest["src_text"])
         df = pd.DataFrame.from_dict(manifest)
         # filer manifest
-        df = filter_manifest_df(df, is_train_split=is_train_split, max_n_frames=48000, min_n_frames=1000)
+        df = filter_manifest_df(df, is_train_split=is_train_split, max_n_frames=480000, min_n_frames=1000)
         save_df_to_tsv(df, cur_root / f"{split}_st.tsv")
 
     # add extra mt training data to train sp model

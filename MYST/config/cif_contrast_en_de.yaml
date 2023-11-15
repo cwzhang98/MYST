@@ -1,8 +1,9 @@
 common:
   fp16: true
   log_format: json
-  log_interval: 100
+  log_interval: 10
   tensorboard_logdir: /home2/cwzhang98/project/MYST/train_log
+  #cpu: true
 
 checkpoint:
   save_dir: /home2/cwzhang98/project/MYST/checkpoint
@@ -31,7 +32,8 @@ criterion:
   ignore_prefix_size: 1
   sentence_avg: true
   contrastive_weight: 1.0
-  muti_contrast: true
+  muti_contrast: false
+  contrast_granularity: coarse
   use_muti_layer_repr_for_contrast: true # indice of layers set in model config
   contrastive_temperature: 0.02
   use_dual_ctr: true
@@ -63,15 +65,16 @@ model:
   no_scale_embedding: false
 
 dataset:
-  num_workers: 8
-  max_tokens: 1_000_000
+  num_workers: 4
+  max_tokens: 1000000
   train_subset: train_st
   valid_subset: dev_st
   update_epoch_batch_itr: false
+  skip_invalid_size_inputs_valid_test: true
 
 distributed_training:
-  ddp_backend: no_c10d # same as legacy_ddp
-  distributed_world_size: 1
+  ddp_backend: legacy_ddp # same as legacy_ddp
+  distributed_world_size: 2
 
 optimization:
   max_update: 500000

@@ -27,6 +27,7 @@ from fairseq.models import (
     FairseqEncoder,
     register_model,
 )
+from fairseq.data import Dictionary
 from fairseq.data.data_utils import lengths_to_padding_mask
 from fairseq.models.wav2vec.wav2vec2 import MASKING_DISTRIBUTION_CHOICES, LAYER_TYPE_CHOICES
 from fairseq.models.speech_to_text.s2t_transformer import Conv1dSubsampler
@@ -235,7 +236,12 @@ class Wav2VecCtc(BaseFairseqModel):
                 [int(k) for k in cfg.conv_kernel_sizes.split(",")]
             )
         else:
-            self.textual_dim_proj = Linear(self.hidden_dim, cfg.textual_encoder_embed_dim)
+            self.textual_dim_proj = nn.Sequential(
+                LayerNorm(self.hidden_dim),
+                Linear(self.hidden_dim, 1024),
+                nn.GELU(),
+                Linear(1024, cfg.textual_encoder_embed_dim),
+            )
         self._build_cif(cfg)
 
     def upgrade_state_dict_named(self, state_dict, name):
@@ -243,12 +249,15 @@ class Wav2VecCtc(BaseFairseqModel):
         return state_dict
 
     @classmethod
-    def build_model(cls, cfg: Wav2Vec2AsrConfig, dictionary):
+    def build_model(cls, cfg: Wav2Vec2AsrConfig, task_or_dict):
         """Build a new model instance."""
         if isinstance(cfg, dict):
             cfg = Wav2Vec2AsrConfig(**cfg)
         w2v_encoder = Wav2VecEncoder(cfg)
-        return cls(cfg, w2v_encoder, len(dictionary))
+        if isinstance(task_or_dict, Dictionary):
+            return cls(cfg, w2v_encoder, len(task_or_dict))
+        else:
+            return cls(cfg, w2v_encoder, len(task_or_dict.target_dictionary))
     
     def _build_cif(self, cfg):
         self.cif_layer = CIFLayer(cfg)
@@ -300,7 +309,7 @@ class Wav2VecCtc(BaseFairseqModel):
             x["padding_mask"],
             transcript_lengths
         )
-        return cif_out["cif_out"][0], cif_out["cif_length"][0] # cif aggraved features
+        return cif_out["cif_out"][0], cif_out["cif_length"][0], cif_out["alpha"][0] # cif aggraved features
 
     def remove_pretrain_modules(self):
         self.ctc_proj = None
@@ -394,7 +403,6 @@ class Wav2VecEncoder(FairseqEncoder):
         task = tasks.setup_task(w2v_args.task, from_checkpoint=True)
         model = task.build_model(w2v_args.model, from_checkpoint=True)
         model.remove_pretraining_modules()
-
         # load checkpoint
         if state is not None and not cfg.no_pretrained_weights:
             self.load_model_weights(state, model, cfg)

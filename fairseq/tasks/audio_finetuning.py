@@ -8,7 +8,6 @@
 import logging
 import os
 from fairseq.data.multi_corpus_dataset import MultiCorpusDataset
-from fairseq.data import MUSTCAudioDataset
 import torch
 import json
 
@@ -404,12 +403,3 @@ class AudioFinetuningTask(AudioPretrainingTask):
                     smooth_method="exp",
                 ).score,
             )
-
-class MUSTCAudioFinetuningTask(AudioFinetuningTask):
-    cfg: AudioFinetuningConfig
-    def __init__(self, cfg: AudioFinetuningConfig):
-        super().__init__(cfg)
-        assert os.path.isdir(cfg.data), "Wrong data path"
-    
-    def load_dataset(self, split: str, task_cfg: AudioFinetuningConfig = None, **kwargs):
-        self.dataset[split] = MUSTCAudioDataset()
