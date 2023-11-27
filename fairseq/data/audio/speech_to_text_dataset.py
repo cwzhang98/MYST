@@ -547,7 +547,7 @@ class SpeechToTextDatasetCreator(object):
     KEY_ID, KEY_AUDIO, KEY_N_FRAMES = "id", "audio", "n_frames"
     KEY_TGT_TEXT = "tgt_text"
     # optional columns
-    KEY_SPEAKER, KEY_SRC_TEXT = "speaker", "src_text"
+    KEY_SPEAKER, KEY_SRC_TEXT_PHO, KEY_SRC_TEXT_RAW  = "speaker", "src_text_pho", "src_text_raw"
     KEY_SRC_LANG, KEY_TGT_LANG = "src_lang", "tgt_lang"
     # default values
     DEFAULT_SPEAKER = DEFAULT_SRC_TEXT = DEFAULT_LANG = ""

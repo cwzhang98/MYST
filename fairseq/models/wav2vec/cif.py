@@ -167,12 +167,12 @@ def cif_function(
             feat_lengths += extend_mask.long()
             max_num_fires = feat_lengths.max()
 
-    output = output[:, :max_num_fires, :]
-    
-    # a size (B, T) mask to erase tail tokens in sequence which dosen't apply extra fire
-    tail_mask = torch.arange(max_num_fires, device=output.device).unsqueeze(0) \
-        >= feat_lengths.unsqueeze(1)
-    output[tail_mask] = 0
+        output = output[:, :max_num_fires, :]
+        
+        # a size (B, T) mask to erase tail tokens in sequence which dosen't apply extra fire
+        tail_mask = torch.arange(max_num_fires, device=output.device).unsqueeze(0) \
+            >= feat_lengths.unsqueeze(1)
+        output[tail_mask] = 0
 
     return {
         "cif_out": [output],

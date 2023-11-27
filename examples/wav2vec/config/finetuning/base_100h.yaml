@@ -68,7 +68,7 @@ model:
   dropout: 0.1
   activation_dropout: 0.0
   feature_grad_mult: 0.0
-  freeze_finetune_updates: 2000
+  freeze_finetune_updates: 4000
   weight_predictor_stop_gradient: true
   use_attention: true
   cif_attention_dropout: 0.1

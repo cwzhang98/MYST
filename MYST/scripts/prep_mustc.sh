@@ -6,8 +6,8 @@ PROJECT_ROOT=$2
 TGT_LANG=$3
 
 
-TEXT_ROOT=${DATA_ROOT}/en-${TGT_LANG}/data/train/txt/train
-MT_TEXT_ROOT=${MT_DATA_ROOT}/en-${TGT_LANG}/train
+TEXT_ROOT=${DATA_ROOT}/en-${TGT_LANG}/data/tst-HE/txt/tst-HE
+#MT_TEXT_ROOT=${MT_DATA_ROOT}/en-${TGT_LANG}/train
 
 cd "$PROJECT_ROOT" || exit
 # echo "converting mustc source text into phoneme"
@@ -26,4 +26,5 @@ cd "$PROJECT_ROOT" || exit
 echo "preparing mustc dataset"
 python examples/speech_to_text/prep_mustc_data.py \
    --data-root "${DATA_ROOT}" --lang de \
-   --vocab-type unigram --vocab-size 8000
+   --vocab-type unigram --vocab-size-mono 5000 \
+   --vocab-size-bi 10000

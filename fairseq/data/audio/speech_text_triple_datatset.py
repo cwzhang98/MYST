@@ -38,7 +38,7 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
             data_cfg: S2TDataConfig,
             audio_paths: List[str],
             n_frames: List[int],
-            src_texts: Optional[List[str]] = None,
+            src_texts: Optional[List[str]] = None, # pho or raw text
             tgt_texts: Optional[List[str]] = None,
             speakers: Optional[List[str]] = None,
             src_langs: Optional[List[str]] = None,
@@ -57,7 +57,7 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
         self.src_dict = src_dict
         if "mt" in split:
             self.dataset_type = "mt"
-        self.check_src_lang_tag()
+        # self.check_src_lang_tag()
 
     def check_src_lang_tag(self):
         # prepend_src_lang_tag: True, see prep_mustc_data.py
@@ -102,21 +102,27 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
         src_text = None
         if self.src_texts is not None:
             tokenized = self.src_texts[index]
-            # tokenize text through pre_tokenizer(here is None) and bpe_tokenizer
-            if self.pre_tokenizer is not None:
-                tokenized = self.tokenize(self.pre_tokenizer, self.src_texts[index])
-            if self.bpe_tokenizer is not None:
-                tokenized = self.tokenize(self.bpe_tokenizer, tokenized)
-            # encode tokenized text use fairseq.Dictionary.encode_line(), return 1-d int tensor, convert to long tensor
-            src_text = self.src_dict.encode_line(
-                tokenized, add_if_not_exist=False, append_eos=True
-            ).long()
+            if self.src_dict is None: # use joint dict if src dict is none
+                if self.pre_tokenizer is not None:
+                    tokenized = self.tokenize(self.pre_tokenizer, self.src_texts[index])
+                if self.bpe_tokenizer is not None:
+                    tokenized = self.tokenize(self.bpe_tokenizer, tokenized)
+                src_text = self.tgt_dict.encode_line( # actually joint dict
+                    tokenized, add_if_not_exist=False, append_eos=True
+                ).long()
+            else: # use pho src dict, no need for pbe 
+                src_text = self.src_dict.encode_line(
+                    tokenized, add_if_not_exist=False, append_eos=True
+                ).long()
             # prepend source lang tag
             if self.cfg.prepend_src_lang_tag:
                 # get tag
                 lang_tag = self.LANG_TAG_TEMPLATE.format(self.src_langs[index])
                 # get index of tag in dict
-                lang_tag_idx = self.src_dict.index(lang_tag)
+                if self.src_dict is None:
+                    lang_tag_idx = self.tgt_dict.index(lang_tag)
+                else:
+                    lang_tag_idx = self.src_dict.index(lang_tag)
                 # concat tag index into text tensor
                 src_text = torch.cat((torch.LongTensor([lang_tag_idx]), src_text), 0)
         # process target txt same as above
@@ -179,7 +185,7 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
             # if ST dataset, the order of text tokens keep same as audio
             if self.dataset_type == "st":
                 source_lengths = torch.tensor(
-                    [s.size() for _, _, s, _ in samples], dtype=torch.long
+                    [s.size(0) for _, _, s, _ in samples], dtype=torch.long
                 ).index_select(0, order)
             # sum up total source text tokens
             src_ntokens = source_lengths.sum(0).item()
@@ -224,7 +230,7 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
                 "src_lengths": n_frames,
                 "prev_output_tokens": prev_output_target_tokens,
                 # subtract lang tag length, num of fires only depends on real text length
-                "transcript_lengths": source_lengths - 1
+                "transcript_lengths": source_lengths - 2
             },
             "target": target, # target text
             "target_lengths": target_lengths,
@@ -264,9 +270,14 @@ class SpeechTextTripleDatasetCreator(SpeechToTextDatasetCreator):
             )
             n_frames.extend([int(ss.get(cls.KEY_N_FRAMES, 0)) for ss in s])
             tgt_texts.extend([ss[cls.KEY_TGT_TEXT] for ss in s])
-            src_texts.extend(
-                [ss.get(cls.KEY_SRC_TEXT, cls.DEFAULT_SRC_TEXT) for ss in s]
-            )
+            if src_dict is not None:
+                src_texts.extend(
+                    [ss.get(cls.KEY_SRC_TEXT_PHO, cls.DEFAULT_SRC_TEXT) for ss in s]
+                )
+            else:
+                src_texts.extend(
+                    [ss.get(cls.KEY_SRC_TEXT_RAW, cls.DEFAULT_SRC_TEXT) for ss in s]
+                )
             speakers.extend([ss.get(cls.KEY_SPEAKER, cls.DEFAULT_SPEAKER) for ss in s])
             src_langs.extend([ss.get(cls.KEY_SRC_LANG, cls.DEFAULT_LANG) for ss in s])
             tgt_langs.extend([ss.get(cls.KEY_TGT_LANG, cls.DEFAULT_LANG) for ss in s])

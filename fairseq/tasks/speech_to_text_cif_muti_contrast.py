@@ -12,6 +12,7 @@ from fairseq import utils
 from fairseq.dataclass import FairseqDataclass
 from fairseq.data.dictionary import Dictionary
 from fairseq.tasks import register_task, FairseqTask
+from fairseq.data.audio.speech_to_text_dataset import SpeechToTextDatasetCreator
 from fairseq.data.audio.speech_text_triple_datatset import (
     SpeechTextTripleDataset,
     SpeechTextTripleDatasetCreator
@@ -35,6 +36,10 @@ class SpeechToTextCifMutiContrastConfig(FairseqDataclass):
     data: str = field(
         default='',
         metadata={"help": "manifest root path"}
+    )
+    use_joint_dict: Optional[bool] = field(
+        default=False,
+        metadata={"help": "use source and target language joint dictionary"}
     )
     config_yaml: str = field(
         default='',
@@ -66,7 +71,7 @@ class SpeechToTextCifMutiContrastConfig(FairseqDataclass):
         metadata={"help": "language pairs for text training, eg: `en-de`"}
     )
     lang_prefix_tok: str = field(
-        default="",
+        default="<lang:de>",
         metadata={"help": "starting token in decoder, eg: `<lang:de>`"}
     )
     external_mt_data: Optional[str] = field(
@@ -102,8 +107,8 @@ class SpeechToTextCifMutiContrastConfig(FairseqDataclass):
         default=None,
         metadata={"help": "args for building the bpe, if needed"}
     )
-    eval_bleu_remove_bpe: str = field(
-        default="sentencepiece",
+    eval_bleu_remove_bpe: Optional[str] = field(
+        default=None,
         metadata={"help": "remove BPE before computing BLEU"}
     )
     eval_bleu_args: Optional[str] = field(
@@ -116,6 +121,7 @@ class SpeechToTextCifMutiContrastConfig(FairseqDataclass):
     )
     seed: int = II("common.seed")
     rebuild_batches: bool = True
+    # ablation_type: Optional[str] = II("model.ablation_type")
 
 @register_task(
     "speech_to_text_cif_muti_contrast",
@@ -127,30 +133,44 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
         cfg: SpeechToTextCifMutiContrastConfig,
         data_cfg,
         src_dict,
-        tgt_dict
+        tgt_dict,
+        joint_dict
     ):
         super().__init__(cfg)
         self.cfg = cfg
         self.src_dict = src_dict
-        self.tgt_dict = tgt_dict
+        self.tgt_dict = tgt_dict if tgt_dict is not None else joint_dict
+        self.joint_dict = joint_dict
         self.data_cfg = data_cfg
         
     @classmethod
     def setup_task(cls, cfg: SpeechToTextCifMutiContrastConfig, **kwargs):
         data_cfg = S2TDataConfig(Path(cfg.config_yaml))
-        src_dict_path = Path(cfg.data) / cfg.lang_pairs / "dict.pho.txt"
-        tgt_dict_path = Path(cfg.data) / cfg.lang_pairs / data_cfg.vocab_filename
-        if not src_dict_path.is_file():
-            raise FileNotFoundError(f"Dict not found: {src_dict_path}")
-        if not tgt_dict_path.is_file():
-            raise FileNotFoundError(f"Dict not found: {tgt_dict_path}")
+        if cfg.use_joint_dict:
+            joint_dict_path = Path(cfg.data) / cfg.lang_pairs / data_cfg.vocab_filename
+            if not joint_dict_path.is_file():
+                raise FileNotFoundError(f"Dict not found: {src_dict_path}")
+        else:
+            src_dict_path = Path(cfg.data) / cfg.lang_pairs / "dict.pho.txt"
+            tgt_dict_path = Path(cfg.data) / cfg.lang_pairs / data_cfg.vocab_filename
+            if not src_dict_path.is_file():
+                raise FileNotFoundError(f"Dict not found: {src_dict_path}")
+            if not tgt_dict_path.is_file():
+                raise FileNotFoundError(f"Dict not found: {tgt_dict_path}")
         # add src lang tag to src dict
         assert cfg.lang_pairs is not None
         src_lang_tag  = f"<lang:{cfg.lang_pairs.split('-')[0]}>"
-        src_dict = Dictionary.load(src_dict_path.as_posix())
-        src_dict.add_symbol(src_lang_tag)
-        tgt_dict = Dictionary.load(tgt_dict_path.as_posix())
-        logger.info(f"source dict size: {len(src_dict)}; target dict size: {len(tgt_dict)}")
+        if cfg.use_joint_dict:
+            joint_dict = Dictionary.load(joint_dict_path.as_posix())
+            logger.info(f"joint dict size: {len(joint_dict)}")
+        else:
+            #if cfg.ablation_type != "w2v_transformer":
+            src_dict = Dictionary.load(src_dict_path.as_posix())
+            src_dict.add_symbol(src_lang_tag)
+            # else:
+            #     src_dict = None
+            tgt_dict = Dictionary.load(tgt_dict_path.as_posix())
+            logger.info(f"source dict size: {len(src_dict) if src_dict is not None else 0}; target dict size: {len(tgt_dict)}")
         if getattr(cfg, "train_subset", None) is not None:
             if not all(s.startswith("train") for s in cfg.train_subset.split(",")):
                 raise ValueError('Train splits should be named like "train*".')
@@ -158,8 +178,10 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
         if cfg.external_mt_data is not None:
             if not Path(cfg.external_mt_data).is_absolute():
                 cfg.external_mt_data = Path(cfg.data) / cfg.external_mt_data
-
-        return cls(cfg, data_cfg, src_dict, tgt_dict)
+        if cfg.use_joint_dict:
+            return cls(cfg, data_cfg, None, None, joint_dict)
+        else:
+            return cls(cfg, data_cfg, src_dict, tgt_dict, None)
 
     def build_model(self, cfg: FairseqDataclass):
         model = super().build_model(cfg)
@@ -187,11 +209,11 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
         
         return criterions.build_criterion(cfg, self)
     
-    def build_tokenizer(self):
+    def build_tokenizer(self, args=None):
         logger.info(f"pre-tokenizer: {self.data_cfg.pre_tokenizer}")
         return encoders.build_tokenizer(Namespace(**self.data_cfg.pre_tokenizer))
     
-    def build_bpe(self):
+    def build_bpe(self, args=None):
         logger.info(f"tokenizer: {self.data_cfg.bpe_tokenizer}")
         return encoders.build_bpe(Namespace(**self.data_cfg.bpe_tokenizer))
     
@@ -342,7 +364,7 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
                 logging_output["_bleu_counts_" + str(i)] = bleu.counts[i]
                 logging_output["_bleu_totals_" + str(i)] = bleu.totals[i]
         return loss, sample_size, logging_output
-            
+
     def inference_step(
         self,
         generator,
@@ -427,7 +449,7 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
         if self.cfg.eval_bleu:
             def sum_logs(key):
                 if key in logging_outputs[0]:
-                    return sum(log[key].cpu().numpy() for log in logging_outputs)
+                    return sum(log[key] for log in logging_outputs)
                 return sum(log.get(key, 0) for log in logging_outputs)
             
             counts, totals = [], []

@@ -30,7 +30,7 @@ from tqdm import tqdm
 
 log = logging.getLogger(__name__)
 
-MANIFEST_COLUMNS = ["id", "audio", "n_frames", "speaker", "tgt_text", "src_text", "src_lang", "tgt_lang"]
+MANIFEST_COLUMNS = ["id", "audio", "n_frames", "speaker", "tgt_text", "src_text_pho", "src_text_raw", "src_lang", "tgt_lang"]
 
 
 class MUSTC(Dataset):
@@ -57,15 +57,22 @@ class MUSTC(Dataset):
             segments = yaml.load(f, Loader=yaml.BaseLoader)
         # Load source and target utterances
         for _lang in ["en", lang]:
-            if split.startswith("train") and _lang == "en":
-                txt_path = txt_root / f"{split}_pho.{_lang}"  # train split src text: load phoneme text
+            if _lang == "en":
+                pho_txt_path = txt_root / f"{split}_pho.{_lang}"  # train split src text: load phoneme text
+                with open(pho_txt_path) as f:
+                    pho_utterances = [r.strip() for r in f]
+            raw_txt_path = txt_root / f"{split}.{_lang}"  # other: load raw text
+            with open(raw_txt_path) as f:
+                raw_utterances = [r.strip() for r in f]      
+            assert len(segments) == len(raw_utterances)
+            if _lang == "en":
+                for i, (pu, ru) in enumerate(zip(pho_utterances, raw_utterances)):
+                    segments[i][f'{_lang}_pho'] = pu
+                    segments[i][f'{_lang}_raw'] = ru
             else:
-                txt_path = txt_root / f"{split}.{_lang}"  # other: load raw text
-            with open(txt_path) as f:
-                utterances = [r.strip() for r in f]
-            assert len(segments) == len(utterances)
-            for i, u in enumerate(utterances):
-                segments[i][_lang] = u
+                for i, u in enumerate(raw_utterances):
+                    segments[i][_lang] = u
+                
         # Gather info
         self.data = []
         for wav_filename, _seg_group in groupby(segments, lambda x: x["wav"]):
@@ -84,14 +91,15 @@ class MUSTC(Dataset):
                         offset,
                         n_frames,
                         sample_rate,
-                        segment["en"],
+                        segment["en_pho"],
+                        segment["en_raw"],
                         segment[lang],
                         segment["speaker_id"],
                         _id,
                     )
                 )
 
-    def __getitem__(self, n: int) -> Tuple[str, int, int, int, str, str, str, str]:
+    def __getitem__(self, n: int) -> Tuple[str, int, int, int, str, str, str, str, str]:
         return self.data[n]
 
     def __len__(self) -> int:
@@ -112,58 +120,74 @@ def process(args):
     assert cur_root.is_dir(), f"{cur_root} is not exist."
 
     # Generate TSV manifest
-    train_text = []
+    train_text_mono = []
+    train_text_bi = []
     # process all splits
     for split in MUSTC.SPLITS:
         print(f"Fetching en-{lang} split {split}...")
         is_train_split = split.startswith("train")
         manifest = {c: [] for c in MANIFEST_COLUMNS}
         dataset = MUSTC(args.data_root, lang, split)
-        for wav_path, offset, n_frames, sample_rate, src_utt, tgt_utt, speaker_id, utt_id in tqdm(dataset):
+        for wav_path, offset, n_frames, sample_rate, src_utt_pho, src_utt_raw, tgt_utt, speaker_id, utt_id in tqdm(dataset):
             manifest["id"].append(utt_id)
             manifest["audio"].append(f"{wav_path}:{offset}:{n_frames}")
             manifest["n_frames"].append(n_frames)
-            manifest["src_text"].append(src_utt)
+            manifest["src_text_pho"].append(src_utt_pho)
+            manifest["src_text_raw"].append(src_utt_raw)
             manifest["tgt_text"].append(tgt_utt)
             manifest["speaker"].append(speaker_id)
             manifest["src_lang"].append("en")
             manifest["tgt_lang"].append(lang)
         if is_train_split:
-            train_text.extend(manifest["tgt_text"]) # train spm only using target text
-            if args.src_tgt_joint_dict:
-                train_text.extend(manifest["src_text"])
+            train_text_mono.extend(manifest["tgt_text"]) # train spm only using target text
+            train_text_bi.extend(manifest["tgt_text"])
+            train_text_bi.extend(manifest["src_text_raw"])
         df = pd.DataFrame.from_dict(manifest)
         # filer manifest
         df = filter_manifest_df(df, is_train_split=is_train_split, max_n_frames=480000, min_n_frames=1000)
         save_df_to_tsv(df, cur_root / f"{split}_st.tsv")
 
     # add extra mt training data to train sp model
-    if args.extra_mt_data_path:
-        print("add extra mt data to train text")
-        mt_data_path = Path(args.extra_mt_data_path) / "en-de"
-        assert mt_data_path.is_dir()
-        with open(mt_data_path / "train.de") as f:
-            train_text.extend([r.strip() for r in f])
+    # if args.extra_mt_data_path:
+    #     print("add extra mt data to train text")
+    #     mt_data_path = Path(args.extra_mt_data_path) / "en-de"
+    #     assert mt_data_path.is_dir()
+    #     with open(mt_data_path / "train.de") as f:
+    #         train_text.extend([r.strip() for r in f])
 
     # Generate vocab
-    vocab_size_str = "" if args.vocab_type == "char" else str(args.vocab_size)
-    spm_filename_prefix = f"spm_{args.vocab_type}_{vocab_size_str}_st"
+    vocab_size_str_mono = "" if args.vocab_type == "char" else str(args.vocab_size_mono)
+    vocab_size_str_bi = "" if args.vocab_type == "char" else str(args.vocab_size_bi)
+    spm_filename_prefix_mono = f"spm_{args.vocab_type}_{vocab_size_str_mono}_st"
+    spm_filename_prefix_bi = f"spm_{args.vocab_type}_{vocab_size_str_bi}_st"
     with NamedTemporaryFile(mode="w") as f:
-        for t in train_text:
+        for t in train_text_mono:
             f.write(t + "\n")
         gen_vocab(
             Path(f.name),
-            cur_root / spm_filename_prefix,
+            cur_root / spm_filename_prefix_mono,
             args.vocab_type,
-            args.vocab_size,
+            args.vocab_size_mono,
             special_symbols=[f"<lang:{lang}>"],
             accept_language=[f"{lang}"]
         )
+    with NamedTemporaryFile(mode="w") as f:
+        for t in train_text_bi:
+            f.write(t + "\n")
+        gen_vocab(
+            Path(f.name),
+            cur_root / spm_filename_prefix_bi,
+            args.vocab_type,
+            args.vocab_size_bi,
+            special_symbols=[f"<lang:{lang}>", "<lang:en>"],
+            accept_language=[f"{lang}", "en"]
+        )
+    
     # Generate config YAML
     gen_config_yaml(
         cur_root,
         args.lang,
-        spm_filename_prefix + ".model",
+        spm_filename_prefix_bi + ".model",
         yaml_filename=f"config_st.yaml",
         prepend_tgt_lang_tag=True,
         prepend_src_lang_tag=True
@@ -178,9 +202,10 @@ def main():
 
     parser.add_argument("--src-tgt-joint-dict", action="store_true", help="generate joint dictionary")  # False
     parser.add_argument("--vocab-type", default="unigram", required=True, type=str,
-                        choices=["bpe", "unigram", "char", "phoneme"])
+                        choices=["bpe", "unigram", "char"])
     parser.add_argument("--extra-mt-data-path", type=str, default="")
-    parser.add_argument("--vocab-size", default=5000, type=int)
+    parser.add_argument("--vocab-size-mono", default=5000, type=int)
+    parser.add_argument("--vocab-size-bi", default=10000, type=int)
     args = parser.parse_args()
 
     process(args)

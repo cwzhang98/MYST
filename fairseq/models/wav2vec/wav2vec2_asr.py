@@ -254,9 +254,9 @@ class Wav2VecCtc(BaseFairseqModel):
         if isinstance(cfg, dict):
             cfg = Wav2Vec2AsrConfig(**cfg)
         w2v_encoder = Wav2VecEncoder(cfg)
-        if isinstance(task_or_dict, Dictionary):
+        if isinstance(task_or_dict, Dictionary): # st ft
             return cls(cfg, w2v_encoder, len(task_or_dict))
-        else:
+        else: # cif pt
             return cls(cfg, w2v_encoder, len(task_or_dict.target_dictionary))
     
     def _build_cif(self, cfg):
@@ -289,9 +289,9 @@ class Wav2VecCtc(BaseFairseqModel):
         """
         if freeze_w2v:
             with torch.no_grad():
-                x = self.w2v_encoder(source, padding_mask)
+                x = self.w2v_encoder(source, padding_mask, apply_mask=False)
         else:
-            x = self.w2v_encoder(source, padding_mask)
+            x = self.w2v_encoder(source, padding_mask, apply_mask=False)
         
         if self.subsample_audio is not None:
             output_length = (1 - x["padding_mask"].int()).sum(dim=1)
@@ -479,7 +479,8 @@ class Wav2VecEncoder(FairseqEncoder):
         }
         if "corpus_key" in kwargs:
             w2v_args["corpus_key"] = kwargs["corpus_key"]
-
+        if "apply_mask" in kwargs:
+            w2v_args["apply_mask"] = kwargs["apply_mask"]
 
         ft = self.freeze_finetune_updates <= self.num_updates
 

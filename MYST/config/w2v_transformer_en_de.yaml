@@ -3,17 +3,15 @@ common:
   log_format: json
   log_interval: 100
   tensorboard_logdir: /home2/cwzhang98/project/MYST/st_train_log
-  on_cpu_convert_precision: true
-  #cpu: true
 
 checkpoint:
   save_dir: /home2/cwzhang98/project/MYST/checkpoint
   restore_file: /home2/cwzhang98/project/MYST/checkpoint/checkpoint_last.pt
-  save-interval-updates: 500
-  save-interval: 1
-  keep_last_epochs: 10
-  keep_interval_updates: 15
-  keep_best_checkpoints: 10
+  # save-interval-updates: 1000
+  # save-interval: 1
+  # keep_last_epochs: 10
+  # keep_interval_updates: 15
+  # keep_best_checkpoints: 10
   best_checkpoint_metric: bleu
   maximize_best_checkpoint_metric: true
   patience: 10
@@ -28,24 +26,17 @@ task:
   eval_bleu_bpe: sentencepiece
   eval_bleu_args: '{"beam": 5, "prefix_size": 1, "lenpen": 0.6}'
   eval_bleu_print_samples: true
+  use_joint_dict: false
 
 criterion:
-  _name: label_smoothed_cross_entropy_with_iso_contrast
+  _name: label_smoothed_cross_entropy
   label_smoothing: 0.1
   report_accuracy: true
   ignore_prefix_size: 1
-  sentence_avg: true
-  contrastive_weight: 1.0
-  muti_contrast: false
-  contrast_granularity: coarse
-  use_muti_layer_repr_for_contrast: true # indice of layers set in model config
-  contrastive_temperature: 0.02
-  use_dual_ctr: true
-  
 
 model:
   _name: s2t_transformer_with_cif_contrast
-  w2v_cif_model_path: /home2/cwzhang98/project/MYST/checkpoints/wav2vec_cif_last.pt
+  w2v_model_path: /home2/cwzhang98/project/MYST/checkpoints/wav2vec_small.pt
   freeze_w2v: true
   activation_fn: relu
   dropout: 0.1
@@ -58,7 +49,6 @@ model:
   encoder_normalize_before: true
   no_positional_embeddings: false
   encoder_learned_pos: false
-  textual_encoder_hidden_state: 4,5
   decoder_layers: 6
   decoder_embed_dim: 512
   decoder_ffn_embed_dim: 2048
@@ -70,7 +60,7 @@ model:
   ablation_type: w2v_transformer
 
 dataset:
-  num_workers: 4
+  num_workers: 32
   max_tokens: 3000000
   train_subset: train_st
   valid_subset: dev_st
