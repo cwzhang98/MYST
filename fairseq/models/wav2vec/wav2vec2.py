@@ -803,7 +803,7 @@ class Wav2Vec2Model(BaseFairseqModel):
             layer=layer,
             corpus_key=corpus_key,
         )
-        return res
+        return res["x"], res["padding_mask"]
 
     def get_logits(self, net_output):
         logits = net_output["x"]

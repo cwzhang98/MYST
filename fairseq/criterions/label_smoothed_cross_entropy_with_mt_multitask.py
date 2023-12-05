@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 import torch.nn.functional as F
 from fairseq import metrics, utils
 from fairseq.criterions import register_criterion
-from typing import List, Optional
 
 from fairseq.criterions.label_smoothed_cross_entropy import (
     LabelSmoothedCrossEntropyCriterionConfig,
@@ -13,7 +12,7 @@ from fairseq.criterions.label_smoothed_cross_entropy import (
 )
 
 @dataclass
-class LabelSmoothedCrossEntropyWithMtMutitaskConfig(
+class LabelSmoothedCrossEntropyWithMtMultitaskConfig(
     LabelSmoothedCrossEntropyCriterionConfig
 ):
     use_jsd: bool = field(
@@ -22,10 +21,10 @@ class LabelSmoothedCrossEntropyWithMtMutitaskConfig(
     )
 
 @register_criterion(
-    "label_smoothed_cross_entropy_with_mt_mutitask", 
-    dataclass=LabelSmoothedCrossEntropyWithMtMutitaskConfig
+    "label_smoothed_cross_entropy_with_mt_multitask", 
+    dataclass=LabelSmoothedCrossEntropyWithMtMultitaskConfig
 )
-class LabelSmoothedCrossEntropyWithIsoConstrast(
+class LabelSmoothedCrossEntropyWithMtMultitask(
     LabelSmoothedCrossEntropyCriterion
 ):
     def __init__(
@@ -36,11 +35,9 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
         ignore_prefix_size=0,
         report_accuracy=False,
         use_jsd=False,
-        mt_task_weight=1.0
     ):
         super().__init__(task, sentence_avg, label_smoothing, ignore_prefix_size, report_accuracy)
         self.use_jsd = use_jsd
-        self.mt_task_weight = mt_task_weight
     
     def forward(self, model, sample, reduce=True):
         net_output = model(**sample["net_input"], is_audio_input=True)
@@ -51,16 +48,16 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
             net_output, _ = net_output
         jsd_loss = torch.tensor(0.)
         if sample["target"] is not None:
-            st_loss, nll_loss_st, lprobs_st, probs_st, target = self.compute_loss(
+            st_loss, nll_loss_st, lprobs_st, target = self.compute_loss(
                 model, net_output, sample, reduce=reduce)
             if model.training:
-                mt_loss, nll_loss_mt, lprobs_mt, probs_mt = self.compute_loss_mt(
+                mt_loss, nll_loss_mt, lprobs_mt = self.compute_loss_mt(
                     model, sample, reduce=reduce)
                 if self.use_jsd:
                     lprobs_mix = 0.5 * (lprobs_st + lprobs_mt)
                     jsd_loss = self.compute_loss_jsd(lprobs_mix, probs_st, probs_mt, target, reduce=reduce)
             
-        loss = st_loss + mt_loss + mt_loss + jsd_loss
+        loss = st_loss + mt_loss + jsd_loss
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else sample["ntokens"]
         )
@@ -68,7 +65,8 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
             "loss": utils.item(loss.data),
             "nll_loss": utils.item(nll_loss_st.data),
             "nll_loss_mt": utils.item(nll_loss_mt.data),
-            "jsd_loss": utils.item(jsd_loss.data),
+            "jsd_loss": utils.item(jsd_loss.data
+                                   ),
             "ntokens": sample["target_ntokens"],
             "nsentences": sample["nsentences"],
             "sample_size": sample_size,
@@ -81,28 +79,9 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
             logging_output["total"] = utils.item(total.data)
 
         return loss, sample_size, logging_output
-    
-    def compute_accuracy(self, model, net_output, sample):
-        lprobs, _, target = self.get_lprobs_and_target(model, net_output, sample)
-        mask = target.ne(self.padding_idx)
-        n_correct = torch.sum(
-            lprobs.argmax(1).masked_select(mask).eq(target.masked_select(mask))
-        )
-        total = torch.sum(mask)
-        return n_correct, total
-    
-    def get_lprobs_and_target(self, model, net_output, sample):
-        probs = model.get_normalized_probs(net_output, log_probs=False)
-        target = model.get_targets(sample, net_output).long()
-        if self.ignore_prefix_size > 0:
-            # lprobs: B x T x C
-            probs = probs[:, self.ignore_prefix_size:, :].contiguous()
-            target = target[:, self.ignore_prefix_size:].contiguous()
-        lprobs = probs.log()
-        return lprobs.view(-1, lprobs.size(-1)), probs.view(-1, probs.size(-1)), target.view(-1)
-    
+
     def compute_loss(self, model, net_output, sample, reduce=True):
-        lprobs, probs, target = self.get_lprobs_and_target(model, net_output, sample)
+        lprobs, target = self.get_lprobs_and_target(model, net_output, sample)
         loss, nll_loss = label_smoothed_nll_loss(
             lprobs,
             target,
@@ -110,7 +89,7 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
             ignore_index=self.padding_idx,
             reduce=reduce,
         )
-        return loss, nll_loss, lprobs, probs, target
+        return loss, nll_loss, lprobs, target
     
     def compute_loss_mt(self, model, sample, reduce=True, return_probs=False):
         decoder_out, _ = model(
@@ -119,19 +98,17 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
             sample["net_input"]["prev_output_tokens"],
             is_audio_input=False
         )
-        probs = model.get_normalized_probs(decoder_out, log_probs=False)
+        lprobs = model.get_normalized_probs(decoder_out, log_probs=True)
         target = model.get_targets(sample, decoder_out)
         if self.ignore_prefix_size > 0:
             probs = probs[:, self.ignore_prefix_size:, :].contiguous()
             target = target[:, self.ignore_prefix_size:].contiguous()
-        lprobs = probs.log()
         lprobs = lprobs.view(-1, lprobs.size(-1))
-        probs = probs.view(-1, lprobs.size(-1))
         target = target.view(-1)
         loss, nll_loss = label_smoothed_nll_loss(
             lprobs, target, self.eps, ignore_index=self.padding_idx, reduce=reduce
         )
-        return loss, nll_loss, lprobs, probs
+        return loss, nll_loss, lprobs
     
     def compute_loss_jsd(self, lprobs_mix, probs_st, probs_mt, target, reduce=True):
         kl_st = F.kl_div(lprobs_mix, probs_st, reduction="none").sum(-1)

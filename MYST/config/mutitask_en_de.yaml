@@ -26,10 +26,10 @@ task:
   eval_bleu_bpe: sentencepiece
   eval_bleu_args: '{"beam": 5, "prefix_size": 1, "lenpen": 0.6}'
   eval_bleu_print_samples: true
-  use_joint_dict: false
+  use_joint_dict: true
 
 criterion:
-  _name: label_smoothed_cross_entropy_with_mt_mutitask
+  _name: label_smoothed_cross_entropy_with_mt_multitask
   label_smoothing: 0.1
   report_accuracy: true
   ignore_prefix_size: 1
@@ -70,7 +70,7 @@ dataset:
 
 distributed_training:
   ddp_backend: legacy_ddp # same as legacy_ddp
-  distributed_world_size: 2
+  distributed_world_size: 1
 
 optimization:
   max_update: 500000

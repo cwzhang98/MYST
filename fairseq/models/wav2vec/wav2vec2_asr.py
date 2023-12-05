@@ -289,9 +289,9 @@ class Wav2VecCtc(BaseFairseqModel):
         """
         if freeze_w2v:
             with torch.no_grad():
-                x = self.w2v_encoder(source, padding_mask, apply_mask=False)
+                x = self.w2v_encoder(source, padding_mask, mask=False)
         else:
-            x = self.w2v_encoder(source, padding_mask, apply_mask=False)
+            x = self.w2v_encoder(source, padding_mask, mask=False)
         
         if self.subsample_audio is not None:
             output_length = (1 - x["padding_mask"].int()).sum(dim=1)
@@ -479,26 +479,26 @@ class Wav2VecEncoder(FairseqEncoder):
         }
         if "corpus_key" in kwargs:
             w2v_args["corpus_key"] = kwargs["corpus_key"]
-        if "apply_mask" in kwargs:
-            w2v_args["apply_mask"] = kwargs["apply_mask"]
+        if "mask" in kwargs:
+            w2v_args["mask"] = kwargs["mask"]
 
         ft = self.freeze_finetune_updates <= self.num_updates
 
         with torch.no_grad() if not ft else contextlib.ExitStack():
             res = self.w2v_model.extract_features(**w2v_args)
 
-            x = res["x"]
-            if res["padding_mask"] == None:
+            x, padding_mask = res
+            if padding_mask == None:
                 padding_mask = torch.zeros((x.shape[0], x.shape[1]), dtype=bool, device=x.device)
-            else:
-                padding_mask = res["padding_mask"]
+            # else:
+            #     padding_mask = res["padding_mask"]
 
         x = self.final_dropout(x)
 
         return {
             "encoder_out": x,  # B x T x C
             "padding_mask": padding_mask,  # B x T,
-            "layer_results": res["layer_results"],
+            #"layer_results": res["layer_results"],
         }
 
     def forward_torchscript(self, net_input):
