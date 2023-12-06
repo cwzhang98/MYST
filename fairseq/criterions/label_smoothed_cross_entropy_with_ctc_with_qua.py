@@ -142,7 +142,6 @@ class LabelSmoothedCrossEntropyWithCtcWithQuaCriterion(LabelSmoothedCrossEntropy
                 logging_output["c_errors"] = c_err
                 logging_output["ctc_c_errs"] = ctc_c_err
                 logging_output["c_total"] = c_len
-                    
 
         return loss, sample_size, logging_output
 

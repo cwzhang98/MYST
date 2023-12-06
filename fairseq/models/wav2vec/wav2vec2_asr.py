@@ -30,7 +30,6 @@ from fairseq.models import (
 from fairseq.data import Dictionary
 from fairseq.data.data_utils import lengths_to_padding_mask
 from fairseq.models.wav2vec.wav2vec2 import MASKING_DISTRIBUTION_CHOICES, LAYER_TYPE_CHOICES
-from fairseq.models.speech_to_text.s2t_transformer import Conv1dSubsampler
 from fairseq.modules import LayerNorm, MultiheadAttention
 from fairseq.tasks import FairseqTask
 
@@ -388,7 +387,7 @@ class Wav2VecEncoder(FairseqEncoder):
             w2v_args = cfg.w2v_args
             if isinstance(w2v_args, dict):
                 cfg.w2v_args = w2v_args = OmegaConf.create(w2v_args)
-            if isinstance(w2v_args, Namespace): # cfg should be instance of Namespace
+            if isinstance(w2v_args, Namespace): # cfg should be instanced of Namespace
                 cfg.w2v_args = w2v_args = convert_namespace_to_omegaconf(w2v_args)
 
         model_normalized = w2v_args.task.get(
@@ -638,3 +637,42 @@ def Linear(in_features, out_features, bias=True):
     if bias:
         nn.init.constant_(m.bias, 0.0)
     return m
+
+
+class Conv1dSubsampler(nn.Module):
+
+    def __init__(
+        self,
+        in_channels: int,
+        mid_channels: int,
+        out_channels: int,
+        kernel_sizes: (3, 3),
+    ):
+        super(Conv1dSubsampler, self).__init__()
+        self.n_layers = len(kernel_sizes)
+        self.conv_layers = nn.ModuleList(
+            nn.Conv1d(
+                in_channels if i == 0 else mid_channels // 2,
+                mid_channels if i < self.n_layers - 1 else out_channels * 2,
+                k,
+                stride=2,
+                padding=k // 2,
+            )
+            for i, k in enumerate(kernel_sizes)
+        )
+
+    def get_out_seq_lens_tensor(self, in_seq_lens_tensor):
+        out = in_seq_lens_tensor.clone()
+        for _ in range(self.n_layers):
+            out = ((out.float() - 1) / 2 + 1).floor().long()
+        return out
+
+    def forward(self, src_tokens, src_lengths):
+        bsz, in_seq_len, _ = src_tokens.size()  # B x T x (C x D)
+        x = src_tokens.transpose(1, 2).contiguous()  # -> B x (C x D) x T
+        for conv in self.conv_layers:
+            x = conv(x)
+            x = nn.functional.glu(x, dim=1)
+        _, _, out_seq_len = x.size()
+        x = x.transpose(1, 2).transpose(0, 1).contiguous()  # -> T x B x (C x D)
+        return x, self.get_out_seq_lens_tensor(src_lengths)

@@ -2,11 +2,11 @@ common:
   fp16: true
   log_format: json
   log_interval: 100
-  tensorboard_logdir: /home2/cwzhang98/project/MYST/st_train_log
+  tensorboard_logdir: ???
 
 checkpoint:
-  save_dir: /home2/cwzhang98/project/MYST/checkpoint
-  restore_file: /home2/cwzhang98/project/MYST/checkpoint/checkpoint_last.pt
+  save_dir: ???
+  restore_file: ???
   # save_interval_updates: 1000
   # save_interval: 1
   keep_last_epochs: 15
@@ -19,7 +19,7 @@ checkpoint:
 task:
   _name: speech_to_text_cif_muti_contrast
   data: ???
-  config_yaml: /home2/cwzhang98/project/dataset/MuSTC/en-de/config_st.yaml
+  config_yaml: ???
   eval_bleu: true
   eval_bleu_detok: moses
   eval_tokenized_bleu: false
@@ -37,7 +37,7 @@ criterion:
 
 model:
   _name: s2t_transformer_with_cif_contrast
-  w2v_model_path: /home2/cwzhang98/project/MYST/checkpoints/wav2vec_small.pt
+  w2v_model_path: ???
   freeze_w2v: true
   activation_fn: relu
   dropout: 0.1

@@ -20,7 +20,7 @@ def get_config_from_yaml(yaml_path: Path):
     except ImportError:
         print("Please install PyYAML: pip install PyYAML")
     config = {}
-    if yaml_path.is_file():
+    if yaml_path.is_file() or yaml_path:
         try:
             with open(yaml_path) as f:
                 config = yaml.load(f, Loader=yaml.FullLoader)
