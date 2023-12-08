@@ -170,7 +170,8 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
             # else:
             #     src_dict = None
             tgt_dict = Dictionary.load(tgt_dict_path.as_posix())
-            logger.info(f"source dict size: {len(src_dict) if src_dict is not None else 0}; target dict size: {len(tgt_dict)}")
+            logger.info(f"source dict size: {len(src_dict) if src_dict is not None else 0}; "
+                        f"target dict size: {len(tgt_dict)}")
         if getattr(cfg, "train_subset", None) is not None:
             if not all(s.startswith("train") for s in cfg.train_subset.split(",")):
                 raise ValueError('Train splits should be named like "train*".')
@@ -239,7 +240,7 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
         self,
         split: str,
         combine: bool = False,
-        epoch = 1,
+        epoch=1,
         task_cfg: FairseqDataclass = None,
         **kwargs
     ):

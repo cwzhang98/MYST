@@ -29,11 +29,15 @@ task:
   use_joint_dict: true
 
 criterion:
-  _name: label_smoothed_cross_entropy_with_mt_multitask
+  _name: label_smoothed_cross_entropy_with_mt_multitask_contrastive
   label_smoothing: 0.1
   report_accuracy: true
   ignore_prefix_size: 1
   use_jsd: true
+  contrast_granularity: coarse
+  contrast_level: high
+  contrastive_temperature: 0.02
+  contrastive_weight: 1.0
 
 model:
   _name: s2t_transformer_with_cif_contrast

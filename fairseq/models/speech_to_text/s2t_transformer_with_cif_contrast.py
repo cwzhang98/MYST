@@ -131,7 +131,7 @@ class S2TTransformerWithCifContrast(FairseqEncoderDecoderModel):
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
         self.is_audio_input = True
-        
+
     @classmethod
     def build_model(cls, cfg: S2TTransformerWithCifContrastConfig, task):
         if task.source_dictionary is not None:
@@ -144,25 +144,25 @@ class S2TTransformerWithCifContrast(FairseqEncoderDecoderModel):
             encoder = cls.build_encoder(cfg, task.target_dictionary, encoder_embed_tokens)
             decoder = cls.build_decoder(cfg, task.target_dictionary, encoder_embed_tokens)
         return cls(encoder, decoder)
-       
+
     @classmethod
     def build_embedding(cls, dictionary, embed_dim):
         num_embeddings = len(dictionary)
         padding_idx = dictionary.pad()
         emb = Embedding(num_embeddings, embed_dim, padding_idx)
         return emb
-    
+
     @classmethod
     def build_encoder(cls, cfg, dict, embed_tokens):
         encoder = S2TTransformerWithCifContrastEncoder(cfg, dict, embed_tokens)
         return encoder
-    
+
     @classmethod
     def build_decoder(cls, cfg, tgt_dict, embed_tokens):
         return TransformerDecoder(cfg, tgt_dict, embed_tokens)
-    
+
     def forward(
-        self, 
+        self,
         src_tokens,
         src_lengths,
         prev_output_tokens,
@@ -177,6 +177,7 @@ class S2TTransformerWithCifContrast(FairseqEncoderDecoderModel):
             return decoder_out, encoder_out
         return decoder_out
 
+
 class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
     def __init__(self, cfg: S2TTransformerWithCifContrastConfig, dictionary, src_embedding):
         super().__init__(dictionary)
@@ -190,11 +191,11 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
         self.padding_idx = dictionary.pad()
         self.shared_encoder_embed_dim = src_embedding.embedding_dim
         self.embed_scale = 1.0 if cfg.no_scale_embedding else math.sqrt(self.shared_encoder_embed_dim)
-        
-        self.build_acousic_encoder(cfg)
+
+        self.build_acoustic_encoder(cfg)
         self.build_shared_encoder(cfg)
-        
-    def build_acousic_encoder(self, cfg: S2TTransformerWithCifContrastConfig):
+
+    def build_acoustic_encoder(self, cfg: S2TTransformerWithCifContrastConfig):
         assert cfg.w2v_model_path is not None and os.path.isfile(cfg.w2v_model_path)
         # load checkpoints
         ckpt = torch.load(cfg.w2v_model_path)
@@ -213,7 +214,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             self.w2v_model = Wav2VecCtc.build_model(ckpt["cfg"]["model"], self.dictionary)
             self.w2v_model.remove_pretrain_modules()
         self.w2v_model.load_state_dict(ckpt["model"], strict=True)
-       
+
     def build_shared_encoder(self, cfg: S2TTransformerWithCifContrastConfig):
         self.positional_embed = (
             PositionalEmbedding(
@@ -229,7 +230,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             self.embedding_layernorm = LayerNorm(self.shared_encoder_embed_dim)
         else:
             self.embedding_layernorm = None
-            
+
         self.transformer_layers = nn.ModuleList(
             [TransformerEncoderLayer(cfg) for _ in range(cfg.encoder_layers)]
         )
@@ -237,7 +238,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             self.layer_norm = LayerNorm(self.shared_encoder_embed_dim)
         else:
             self.layer_norm = None
-    
+
     def encode_audio(self, src_tokens, src_lengths, transcript_lengths=None):
         padding_mask = lengths_to_padding_mask(src_lengths)
         if self.cfg.ablation_type == "w2v_transformer":
@@ -260,7 +261,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             if self.cfg.ablation_type == "w2v_transformer":
                 positions = positions.transpose(0, 1)
             w2v_feature += positions
-        
+
         w2v_feature = self.dropout_module(w2v_feature)
         if self.cfg.ablation_type == "w2v_transformer":
             return w2v_feature, encoder_padding_mask
@@ -279,32 +280,32 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
         x = x.transpose(0, 1)  # B x T x C -> T x B x C
         encoder_padding_mask = src_tokens.eq(self.padding_idx)
         return x, encoder_padding_mask
-        
+
     def forward(
         self,
-        src_tokens, 
-        src_lengths, 
-        transcript_lengths, 
-        is_audio_input=True, 
+        src_tokens,
+        src_lengths,
+        transcript_lengths,
+        is_audio_input=True,
         **kwargs
     ):
         """
             src_tokens: (B, T)
             src_lengths:(B)
         """
-        if is_audio_input: # forward audio
+        if is_audio_input:  # forward audio
             if self.cfg.ablation_type == "w2v_transformer":
                 x, encoder_padding_mask = self.encode_audio(src_tokens, src_lengths)
             else:
                 x, encoder_padding_mask, alpha = self.encode_audio(
                     src_tokens, src_lengths, transcript_lengths.squeeze(-1))
-        else: # forward text
+        else:  # forward text
             x, encoder_padding_mask = self.encode_text(src_tokens)
-            
+
         # encoder_embedding = x if (
         #     self.cfg.muti_contrast or self.cfg.contrast_granularity == "fine"
         # ) else None
-        
+
         # shared_encoder_states = None
         # if self.cfg.muti_contrast or self.cfg.contrast_granularity == "coarse":
         #     if self.cfg.textual_encoder_hidden_state is not None:
@@ -320,18 +321,18 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
 
         if self.layer_norm is not None:
             x = self.layer_norm(x)
-        
+
         return {
-            "encoder_out": [x], # T x B x C
-            "encoder_padding_mask": [encoder_padding_mask], # B x T
-            "encoder_embedding": None, # T x B x C
+            "encoder_out": [x],  # T x B x C
+            "encoder_padding_mask": [encoder_padding_mask],  # B x T
+            "encoder_embedding": None,  # T x B x C
             "encoder_states": None,
             "src_tokens": None,
             "src_lengths": None,
             "shared_encoder_states": None,
             "alpha": alpha if is_audio_input and self.cfg.ablation_type != "w2v_transformer" else None
         }
-    
+
     def reorder_encoder_out(self, encoder_out, new_order):
         new_encoder_out = (
             []

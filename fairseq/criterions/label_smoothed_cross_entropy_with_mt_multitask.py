@@ -23,24 +23,24 @@ class LabelSmoothedCrossEntropyWithMtMultitaskConfig(
 
 
 @register_criterion(
-    "label_smoothed_cross_entropy_with_mt_multitask", 
+    "label_smoothed_cross_entropy_with_mt_multitask",
     dataclass=LabelSmoothedCrossEntropyWithMtMultitaskConfig
 )
 class LabelSmoothedCrossEntropyWithMtMultitask(
     LabelSmoothedCrossEntropyCriterion
 ):
     def __init__(
-        self,
-        task,
-        sentence_avg,
-        label_smoothing,
-        ignore_prefix_size=0,
-        report_accuracy=False,
-        use_jsd=False,
+            self,
+            task,
+            sentence_avg,
+            label_smoothing,
+            ignore_prefix_size=0,
+            report_accuracy=False,
+            use_jsd=False,
     ):
         super().__init__(task, sentence_avg, label_smoothing, ignore_prefix_size, report_accuracy)
         self.use_jsd = use_jsd
-    
+
     def forward(self, model, sample, reduce=True):
         net_output = model(**sample["net_input"], is_audio_input=True)
         st_loss, nll_loss_st = torch.tensor(0.), torch.tensor(0.)
@@ -55,9 +55,8 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
                 mt_loss, nll_loss_mt, lprobs_mt = self.compute_loss_mt(
                     model, sample, reduce=reduce)
                 if self.use_jsd:
-                    lprobs_mix = 0.5 * (lprobs_st + lprobs_mt)
-                    jsd_loss = self.compute_loss_jsd(lprobs_mix, lprobs_st, lprobs_mt, target, reduce=reduce)
-            
+                    jsd_loss = self.compute_loss_jsd(lprobs_st, lprobs_mt, target, reduce=reduce)
+
         loss = st_loss + mt_loss + jsd_loss
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else sample["ntokens"]
@@ -90,8 +89,8 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
             reduce=reduce,
         )
         return loss, nll_loss, lprobs, target
-    
-    def compute_loss_mt(self, model, sample, reduce=True, return_probs=False):
+
+    def compute_loss_mt(self, model, sample, reduce=True):
         decoder_out, _ = model(
             sample["source"],
             sample["source_lengths"],
@@ -109,10 +108,11 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
             lprobs, target, self.eps, ignore_index=self.padding_idx, reduce=reduce
         )
         return loss, nll_loss, lprobs
-    
-    def compute_loss_jsd(self, lprobs_mix, probs_st, probs_mt, target, reduce=True):
-        kl_st = F.kl_div(lprobs_mix, probs_st, reduction="none").sum(-1)
-        kl_mt = F.kl_div(lprobs_mix, probs_mt, reduction="none").sum(-1)
+
+    def compute_loss_jsd(self, lprobs_st, lprobs_mt, target, reduce=True):
+        lprobs_mix = 0.5 * (lprobs_st + lprobs_mt)
+        kl_st = F.kl_div(lprobs_mix, lprobs_st, log_target=True, reduction="none").sum(-1)
+        kl_mt = F.kl_div(lprobs_mix, lprobs_mt, log_target=True, reduction="none").sum(-1)
         pad_mask = target.eq(self.padding_idx)
         kl_mt.masked_fill_(pad_mask, 0.0)
         kl_st.masked_fill_(pad_mask, 0.0)
@@ -137,7 +137,7 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
                            nll_loss_mt_sum / sample_size / math.log(2), sample_size, round=3)
         if jsd_loss_sum > 0:
             metrics.log_scalar("jsd_loss",
-                            jsd_loss_sum / sample_size / math.log(2), sample_size, round=3)
+                               jsd_loss_sum / sample_size / math.log(2), sample_size, round=3)
         total = utils.item(sum(log.get("total", 0) for log in logging_outputs))
         if total > 0:
             metrics.log_scalar("total", total)
@@ -153,5 +153,3 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
                 if meters["total"].sum > 0
                 else float("nan"),
             )
-
-

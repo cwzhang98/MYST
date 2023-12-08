@@ -9,13 +9,13 @@ TGT_LANG=$3
 TEXT_ROOT=${DATA_ROOT}/en-${TGT_LANG}/data/tst-HE/txt/tst-HE
 #MT_TEXT_ROOT=${MT_DATA_ROOT}/en-${TGT_LANG}/train
 
-cd "$PROJECT_ROOT" || exit
-# echo "converting mustc source text into phoneme"
-# python examples/speech_text_joint_to_text/scripts/g2p_encode.py \
-#    --lower-case --do-filter --use-word-start --no-punc \
-#    --reserve-word examples/speech_text_joint_to_text/configs/mustc_noise.list \
-#    --data-path "${TEXT_ROOT}".en \
-#    --out-path "${TEXT_ROOT}"_pho.en
+#cd "$PROJECT_ROOT" || exit
+#echo "converting mustc source text into phoneme"
+#python examples/speech_text_joint_to_text/scripts/g2p_encode.py \
+#  --lower-case --do-filter --use-word-start --no-punc \
+#  --reserve-word examples/speech_text_joint_to_text/configs/mustc_noise.list \
+#  --data-path "${TEXT_ROOT}".en \
+#  --out-path "${TEXT_ROOT}"_pho.en
 
 # echo "converting mt source text into phoneme"
 # python examples/speech_text_joint_to_text/scripts/g2p_encode.py \
