@@ -26,7 +26,7 @@ task:
   eval_bleu_bpe: sentencepiece
   eval_bleu_args: '{"beam": 5, "prefix_size": 1, "lenpen": 0.6}'
   eval_bleu_print_samples: true
-  use_joint_dict: true
+  use_joint_dict: false
 
 criterion:
   _name: label_smoothed_cross_entropy_with_mt_multitask_contrastive
@@ -35,7 +35,7 @@ criterion:
   ignore_prefix_size: 1
   use_jsd: true
   contrast_granularity: coarse
-  contrast_level: high
+  contrast_level: low
   contrastive_temperature: 0.02
   contrastive_weight: 1.0
 
@@ -66,11 +66,12 @@ model:
 
 dataset:
   num_workers: 32
-  max_tokens: 3000000
+  max_tokens: 5000000
   train_subset: train_st
   valid_subset: dev_st
   update_epoch_batch_itr: false
   skip_invalid_size_inputs_valid_test: true
+  batch_size: 200
 
 distributed_training:
   ddp_backend: legacy_ddp # same as legacy_ddp
@@ -91,16 +92,3 @@ optimizer:
 lr_scheduler:
   _name: inverse_sqrt
   warmup_updates: 25_000
-
-
-
-
-
-
-
-
-
-
-  
-
-

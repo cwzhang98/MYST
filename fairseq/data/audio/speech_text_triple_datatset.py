@@ -110,7 +110,7 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
                 src_text = self.tgt_dict.encode_line( # actually joint dict
                     tokenized, add_if_not_exist=False, append_eos=True
                 ).long()
-            else: # use pho src dict, no need for pbe 
+            else:  # use pho src dict, no need for pbe
                 src_text = self.src_dict.encode_line(
                     tokenized, add_if_not_exist=False, append_eos=True
                 ).long()

@@ -23,8 +23,8 @@ class LabelSmoothedCrossEntropyWithMtMultitaskWithQua(
         ignore_prefix_size=0,
         report_accuracy=False,
         use_jsd=False
-        ):
-        super().__init__(task, sentence_avg, label_smoothing,ignore_prefix_size, report_accuracy, use_jsd)
+    ):
+        super().__init__(task, sentence_avg, label_smoothing, ignore_prefix_size, report_accuracy, use_jsd)
 
     def forward(self, model, sample, reduce=True):
         net_output = model(**sample["net_input"], is_audio_input=True)
@@ -34,10 +34,10 @@ class LabelSmoothedCrossEntropyWithMtMultitaskWithQua(
         if model.training:
             net_output, encoder_out = net_output
         if sample["target"] is not None:
-            st_loss, nll_loss_st, lprobs_st, probs_st, target = self.compute_loss(
+            st_loss, nll_loss_st, lprobs_st, target = self.compute_loss(
                 model, net_output, sample, reduce=reduce)
             if model.training:
-                mt_loss, nll_loss_mt, lprobs_mt, probs_mt = self.compute_loss_mt(
+                mt_loss, nll_loss_mt, lprobs_mt = self.compute_loss_mt(
                     model, sample, reduce=reduce)
                 # qua loss
                 if sample["net_input"]["transcript_lengths"] is not None:
@@ -47,8 +47,7 @@ class LabelSmoothedCrossEntropyWithMtMultitaskWithQua(
                     qua_loss = F.l1_loss(alpha_sum, source_lengths, reduction='sum')
 
                 if self.use_jsd:
-                    lprobs_mix = 0.5 * (lprobs_st + lprobs_mt)
-                    jsd_loss = self.compute_loss_jsd(lprobs_mix, probs_st, probs_mt, target, reduce=reduce)
+                    jsd_loss = self.compute_loss_jsd(lprobs_st, lprobs_mt, target, reduce=reduce)
             
         loss = st_loss + mt_loss + jsd_loss + qua_loss
         sample_size = (

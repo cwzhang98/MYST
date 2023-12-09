@@ -229,17 +229,19 @@ class Wav2VecCtc(BaseFairseqModel):
         
         if cfg.sub_sampler:
             self.subsample_audio = Conv1dSubsampler(
-                self.hidden_dim, # 768
-                cfg.conv_channels, # 1024
-                cfg.textual_encoder_embed_dim, # 512
+                self.hidden_dim,  # 768
+                cfg.conv_channels,  # 1024
+                cfg.textual_encoder_embed_dim,  # 512
                 [int(k) for k in cfg.conv_kernel_sizes.split(",")]
             )
         else:
             self.textual_dim_proj = nn.Sequential(
-                LayerNorm(self.hidden_dim),
                 Linear(self.hidden_dim, 1024),
+                nn.Dropout(p=cfg.dropout, inplace=True),
                 nn.GELU(),
                 Linear(1024, cfg.textual_encoder_embed_dim),
+                nn.Dropout(p=cfg.dropout, inplace=True),
+                LayerNorm(cfg.textual_encoder_embed_dim),
             )
         self._build_cif(cfg)
 
@@ -253,9 +255,9 @@ class Wav2VecCtc(BaseFairseqModel):
         if isinstance(cfg, dict):
             cfg = Wav2Vec2AsrConfig(**cfg)
         w2v_encoder = Wav2VecEncoder(cfg)
-        if isinstance(task_or_dict, Dictionary): # st ft
+        if isinstance(task_or_dict, Dictionary):  # st ft
             return cls(cfg, w2v_encoder, len(task_or_dict))
-        else: # cif pt
+        else:  # cif pt
             return cls(cfg, w2v_encoder, len(task_or_dict.target_dictionary))
     
     def _build_cif(self, cfg):
@@ -323,7 +325,7 @@ class Wav2VecCtc(BaseFairseqModel):
             x["encoder_out"] = feats.transpose(1, 0).contiguous() 
             x["padding_mask"] = lengths_to_padding_mask(output_length)
         else:
-            x["encoder_out"] = self.textual_dim_proj(x["encoder_out"]) # 768 -> 512
+            x["encoder_out"] = self.textual_dim_proj(x["encoder_out"])  # 768 -> 512
 
         if self.ctc_joint_training:
             ctc_proj_out = self.ctc_proj(x["encoder_out"])
@@ -341,8 +343,8 @@ class Wav2VecCtc(BaseFairseqModel):
         else:
             cif_proj_out = self.ctc_proj(cif_out["cif_out"][0])
         x.update({
-            "encoder_out": cif_proj_out, # cif logits; B x T x C
-            "ctc_proj_out": ctc_proj_out, # ctc logits; B x T x C
+            "encoder_out": cif_proj_out,  # cif logits; B x T x C
+            "ctc_proj_out": ctc_proj_out,  # ctc logits; B x T x C
             "alpha": cif_out["alpha"][0],
             "cif_length": cif_out["cif_length"][0],
             "beta": self.beta
@@ -374,7 +376,7 @@ class Wav2VecEncoder(FairseqEncoder):
             "feature_grad_mult": cfg.feature_grad_mult,
         }
 
-        if cfg.w2v_args is None: # in pt, args should be none
+        if cfg.w2v_args is None:  # in pt, args should be none
             state = checkpoint_utils.load_checkpoint_to_cpu(cfg.w2v_path, arg_overrides)
             w2v_args = state.get("cfg", None)
             if w2v_args is None:
@@ -382,7 +384,7 @@ class Wav2VecEncoder(FairseqEncoder):
             w2v_args.criterion = None
             w2v_args.lr_scheduler = None
             cfg.w2v_args = w2v_args
-        else: # in ST fine tune, pass the checkpoint args
+        else:  # in ST fine tune, pass the checkpoint args
             state = None
             w2v_args = cfg.w2v_args
             if isinstance(w2v_args, dict):
@@ -421,7 +423,7 @@ class Wav2VecEncoder(FairseqEncoder):
             for name, module in model.named_modules():
                 if "encoder.layers" in name and len(name.split(".")) == 3:
                     # Only for layers, we do a special handling and load the weights one by one
-                    # We dont load all weights together as that wont be memory efficient and may
+                    # We don't load all weights together as that wont be memory efficient and may
                     # cause oom
                     new_dict = {
                         k.replace(name + ".", ""): v
