@@ -50,17 +50,17 @@ class LabelSmoothedCrossEntropyWithCtcWithQuaCriterion(LabelSmoothedCrossEntropy
             if hasattr(task, "blank_symbol")
             else 0
         )
-    
+
     def forward(self, model, sample, reduce=True):
         net_output = model(sample["target_lengths"], **sample["net_input"])
         # smoothed loss, nll_loss
         # target pad mask apply in label_smoothed_nll_loss()
         loss, nll_loss = self.compute_loss(model, net_output, sample, reduce=reduce)
-        
+
         ctc_loss = torch.tensor(0.0).type_as(loss)
 
         if self.ctc_weight > 0.0:
-            ctc_lprobs, ctc_lens = model.get_ctc_output(net_output) # ctc_lprobs: T x B x C
+            ctc_lprobs, ctc_lens = model.get_ctc_output(net_output)  # ctc_lprobs: T x B x C
             ctc_tgt, ctc_tgt_lens = model.get_ctc_target(sample)
             # apply target pad mask
             ctc_tgt_mask = lengths_to_mask(ctc_tgt_lens)
@@ -96,7 +96,7 @@ class LabelSmoothedCrossEntropyWithCtcWithQuaCriterion(LabelSmoothedCrossEntropy
             n_correct, total = self.compute_accuracy(model, net_output, sample)
             logging_output["n_correct"] = utils.item(n_correct.data)
             logging_output["total"] = utils.item(total.data)
-        
+
         # compute wer during validation
         if not model.training:
             import editdistance
@@ -116,14 +116,14 @@ class LabelSmoothedCrossEntropyWithCtcWithQuaCriterion(LabelSmoothedCrossEntropy
                     lprob, ctc_lprob = lprob[:input_length], ctc_lprob[:ctc_input_length]
                     p = (target != self.task.target_dictionary.pad()) & \
                         (target != self.task.target_dictionary.eos())
-                    targ = target[p] # remove pad and eos symbols
+                    targ = target[p]  # remove pad and eos symbols
                     targ_units_arr = targ.tolist()
                     # unit err rate
                     # compress ctc tokens
                     toks, ctc_toks = lprob.argmax(dim=-1), ctc_lprob.argmax(dim=-1).unique_consecutive()
                     # remove blank tokens
-                    pred_units_arr, pred_ctc_units_arr = toks[toks != self.blank_idx].tolist() \
-                                                        , ctc_toks[ctc_toks != self.blank_idx].tolist()
+                    pred_units_arr, pred_ctc_units_arr = (toks[toks != self.blank_idx].tolist(),
+                                                          ctc_toks[ctc_toks != self.blank_idx].tolist())
                     c_err += editdistance.eval(pred_units_arr, targ_units_arr)
                     ctc_c_err += editdistance.eval(pred_ctc_units_arr, targ_units_arr)
                     c_len += len(targ_units_arr)
@@ -135,7 +135,7 @@ class LabelSmoothedCrossEntropyWithCtcWithQuaCriterion(LabelSmoothedCrossEntropy
                     w_errs += editdistance.eval(pred_words, targ_words)
                     ctc_w_errs += editdistance.eval(ctc_pred_words, targ_words)
                     w_len += len(targ_words)
-                
+
                 logging_output["w_errors"] = w_errs
                 logging_output["ctc_w_errs"] = ctc_w_errs
                 logging_output["w_total"] = w_len

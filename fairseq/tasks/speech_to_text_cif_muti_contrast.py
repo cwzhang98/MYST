@@ -140,7 +140,6 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
         self.cfg = cfg
         self.src_dict = src_dict
         self.tgt_dict = tgt_dict if tgt_dict is not None else joint_dict
-        self.joint_dict = joint_dict
         self.data_cfg = data_cfg
         
     @classmethod
@@ -149,7 +148,7 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
         if cfg.use_joint_dict:
             joint_dict_path = Path(cfg.data) / cfg.lang_pairs / data_cfg.vocab_filename
             if not joint_dict_path.is_file():
-                raise FileNotFoundError(f"Dict not found: {src_dict_path}")
+                raise FileNotFoundError(f"Dict not found: {joint_dict_path}")
         else:
             src_dict_path = Path(cfg.data) / cfg.lang_pairs / "dict.pho.txt"
             tgt_dict_path = Path(cfg.data) / cfg.lang_pairs / data_cfg.vocab_filename
@@ -159,7 +158,7 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
                 raise FileNotFoundError(f"Dict not found: {tgt_dict_path}")
         # add src lang tag to src dict
         assert cfg.lang_pairs is not None
-        src_lang_tag  = f"<lang:{cfg.lang_pairs.split('-')[0]}>"
+        src_lang_tag = f"<lang:{cfg.lang_pairs.split('-')[0]}>"
         if cfg.use_joint_dict:
             joint_dict = Dictionary.load(joint_dict_path.as_posix())
             logger.info(f"joint dict size: {len(joint_dict)}")
@@ -221,7 +220,7 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
     def build_generator(
         self,
         models,
-        args, # fairseq.dataclass.configs.GenerationConfig
+        args,  # fairseq.dataclass.configs.GenerationConfig
         seq_gen_cls=None,
         extra_gen_cls_kwargs=None,
         prefix_allowed_tokens_fn=None
@@ -406,8 +405,8 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
                 escape_unk=True
             )
             if self.cfg.lang_prefix_tok is not None:
-                hyp = hyp.replace(self.cfg.lang_prefix_tok, "")
-                ref = ref.replace(self.cfg.lang_prefix_tok, "")
+                hyp = hyp.replace(self.cfg.lang_prefix_tok, "").strip()
+                ref = ref.replace(self.cfg.lang_prefix_tok, "").strip()
             hyps.append(hyp)
             refs.append(ref)
         if self.cfg.eval_bleu_print_samples:
@@ -455,8 +454,12 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
             
             counts, totals = [], []
             for i in range(EVAL_BLEU_ORDER):
-                counts.append(sum_logs("_bleu_counts_" + str(i)))
-                totals.append(sum_logs("_bleu_totals_" + str(i)))
+                counts.append(utils.item(
+                    sum_logs("_bleu_counts_" + str(i))
+                ))
+                totals.append(utils.item(
+                    sum_logs("_bleu_totals_" + str(i))
+                ))
             if max(totals) > 0:
                 metrics.log_scalar("_bleu_counts", np.array(counts))
                 metrics.log_scalar("_bleu_totals", np.array(totals))

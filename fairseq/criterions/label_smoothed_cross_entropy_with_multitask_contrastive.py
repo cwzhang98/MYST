@@ -5,16 +5,16 @@ import torch.nn.functional as F
 from fairseq import metrics, utils
 from typing import Optional
 from fairseq.criterions import register_criterion
-from fairseq.criterions.label_smoothed_cross_entropy_with_mt_multitask import (
-    LabelSmoothedCrossEntropyWithMtMultitask,
-    LabelSmoothedCrossEntropyWithMtMultitaskConfig,
+from fairseq.criterions.label_smoothed_cross_entropy_with_multitask import (
+    LabelSmoothedCrossEntropyWithMultitask,
+    LabelSmoothedCrossEntropyWithMultitaskConfig,
     label_smoothed_nll_loss
 )
 
 
 @dataclass
-class LabelSmoothedCrossEntropyWithMtMultitaskContrastiveConfig(
-    LabelSmoothedCrossEntropyWithMtMultitaskConfig
+class LabelSmoothedCrossEntropyWithMultitaskContrastiveConfig(
+    LabelSmoothedCrossEntropyWithMultitaskConfig
 ):
     contrast_granularity: str = field(
         default="fine",
@@ -32,14 +32,18 @@ class LabelSmoothedCrossEntropyWithMtMultitaskContrastiveConfig(
         default=1.0,
         metadata={"help": "the weight of contrastive loss"}
     )
+    use_dual_ctr: Optional[bool] = field(
+        default=False,
+        metadata={"help": "if we want to use dual contrastive loss"}
+    )
 
 
 @register_criterion(
-    "label_smoothed_cross_entropy_with_mt_multitask_contrastive",
-    dataclass=LabelSmoothedCrossEntropyWithMtMultitaskContrastiveConfig
+    "label_smoothed_cross_entropy_with_multitask_contrastive",
+    dataclass=LabelSmoothedCrossEntropyWithMultitaskContrastiveConfig
 )
-class LabelSmoothedCrossEntropyWithMtMultitaskContrastiveCriterion(
-    LabelSmoothedCrossEntropyWithMtMultitask
+class LabelSmoothedCrossEntropyWithMultitaskContrastiveCriterion(
+    LabelSmoothedCrossEntropyWithMultitask
 ):
     def __init__(
             self,
@@ -52,18 +56,24 @@ class LabelSmoothedCrossEntropyWithMtMultitaskContrastiveCriterion(
             contrast_granularity=None,
             contrast_level=None,
             contrastive_temperature=1.0,
-            contrastive_weight=1.0
+            contrastive_weight=1.0,
+            use_dual_ctr=False,
+            asr_task=False,
+            use_ctc=False
     ):
-        super().__init__(task, sentence_avg, label_smoothing, ignore_prefix_size, report_accuracy, use_jsd)
+        super().__init__(task, sentence_avg, label_smoothing, ignore_prefix_size,
+                         report_accuracy, use_jsd, asr_task, use_ctc)
         self.contrast_granularity = contrast_granularity
         self.contrast_level = contrast_level
         self.contrastive_temperature = contrastive_temperature
         self.contrastive_weight = contrastive_weight
+        self.use_dual_ctr = use_dual_ctr
 
     def forward(self, model, sample, reduce=True):
         net_output = model(**sample["net_input"], is_audio_input=True)
         st_loss, nll_loss_st = torch.tensor(0.), torch.tensor(0.)
         mt_loss, nll_loss_mt = torch.tensor(0.), torch.tensor(0.)
+        asr_loss, nll_loss_asr = torch.tensor(0.), torch.tensor(0.)
         jsd_loss, contrastive_loss = torch.tensor(0.), torch.tensor(0.)
         if model.training:
             net_output, encoder_out_st = net_output
@@ -73,19 +83,28 @@ class LabelSmoothedCrossEntropyWithMtMultitaskContrastiveCriterion(
             if model.training:
                 mt_loss, nll_loss_mt, lprobs_mt, encoder_out_mt = self.compute_loss_mt(
                     model, sample, reduce=reduce)
+                if self.asr_task:
+                    if self.use_ctc:
+                        asr_loss = self.compute_loss_ctc(model, sample, reduce=reduce)
+                    else:
+                        asr_loss, nll_loss_asr = self.compute_loss_asr(model, sample, reduce=reduce)
                 if self.use_jsd:
                     jsd_loss = self.compute_loss_jsd(lprobs_st, lprobs_mt, target, reduce=reduce)
                 if self.contrastive_weight > 0.0:
                     contrastive_loss = self.compute_contrastive_loss(
-                        model, sample, encoder_out_st, encoder_out_mt)
-        loss = st_loss + mt_loss + jsd_loss + self.contrastive_weight * contrastive_loss
+                        model, sample, encoder_out_st, encoder_out_mt,
+                        self.contrast_granularity, self.contrast_level, reduce=reduce)
+
+        loss = st_loss + mt_loss + asr_loss + jsd_loss + self.contrastive_weight * contrastive_loss
         sample_size = (
-            sample["target"].size(0) if self.sentence_avg else sample["ntokens"]
+            sample["target"].size(0) if self.sentence_avg else sample["target_ntokens"]
         )
         logging_output = {
             "loss": utils.item(loss.data),
             "nll_loss": utils.item(nll_loss_st.data),
             "nll_loss_mt": utils.item(nll_loss_mt.data),
+            "nll_loss_asr": utils.item(nll_loss_asr.data),
+            "ctc_loss": utils.item(asr_loss.data) if self.use_ctc else 0,
             "jsd_loss": utils.item(jsd_loss.data),
             "contrastive_loss": utils.item(contrastive_loss.data),
             "ntokens": sample["target_ntokens"],
@@ -120,16 +139,27 @@ class LabelSmoothedCrossEntropyWithMtMultitaskContrastiveCriterion(
         )
         return loss, nll_loss, lprobs, encoder_out
 
-    def compute_contrastive_loss(self, model, sample, encoder_out_st, encoder_out_mt, reduce=True):
-        if self.contrast_granularity == 'coarse':
-            if self.contrast_level == 'high':
+    def compute_contrastive_loss(
+            self,
+            model,
+            sample,
+            encoder_out_st,
+            encoder_out_mt,
+            contrast_granularity,
+            contrast_level,
+            reduce=True,
+    ):
+        assert contrast_granularity == 'coarse' or contrast_granularity == 'fine'
+        assert contrast_level == 'low' or contrast_level == 'high'
+
+        if contrast_granularity == 'coarse':
+            if contrast_level == 'high':
                 # contrast on encoder hidden states
                 seq_hidden_st = self.get_seq_hidden(
                     encoder_out_st["encoder_out"], encoder_out_st["encoder_padding_mask"][0])
                 seq_hidden_mt = self.get_seq_hidden(
                     encoder_out_mt["encoder_out"], encoder_out_mt["encoder_padding_mask"][0])
-                ...
-            elif self.contrast_level == 'low':
+            else:
                 # contrast on embeddings
                 # forward embedding
                 audio_out = model.encoder.encode_audio(
@@ -142,26 +172,66 @@ class LabelSmoothedCrossEntropyWithMtMultitaskContrastiveCriterion(
                     [audio_embed], padding_mask_st)
                 seq_hidden_mt = self.get_seq_hidden(
                     [text_embed], padding_mask_mt)
-            else:
-                raise ValueError(
-                    f"Excepted `contrast_level` should be `low` or `high`, got {self.contrast_level}"
-                )
             sim_matrix = F.cosine_similarity(
                 seq_hidden_st.unsqueeze(0),
                 seq_hidden_mt.unsqueeze(1),
                 dim=-1
             )
             sim_matrix /= self.contrastive_temperature
-            contrastive_loss = -torch.nn.LogSoftmax(0)(sim_matrix).diag()
-            del sim_matrix
-            del seq_hidden_st
-            del seq_hidden_mt
-        elif self.contrast_granularity == 'fine':
-            ...
+            if self.use_dual_ctr:
+                contrastive_loss = 0.5 * (-torch.nn.LogSoftmax(0)(sim_matrix).diag() +
+                                          -torch.nn.LogSoftmax(1)(sim_matrix).diag())
+            else:
+                contrastive_loss = -torch.nn.LogSoftmax(0)(sim_matrix).diag()
         else:
-            raise ValueError(
-                f"Excepted `contrast_granularity` should be `fine` or `coarse`, got {self.contrast_granularity}"
+            if contrast_level == 'high':
+                audio_hidden, padding_mask_st = (encoder_out_st["encoder_out"][0],
+                                                 encoder_out_st["encoder_padding_mask"][0])
+                text_hidden, padding_mask_mt = (encoder_out_mt["encoder_out"][0],
+                                                encoder_out_mt["encoder_padding_mask"][0])
+            else:
+                audio_out = model.encoder.encode_audio(
+                    sample["net_input"]["src_tokens"],
+                    sample["net_input"]["src_lengths"]
+                )
+                audio_hidden, padding_mask_st = audio_out[0], audio_out[1]
+                text_hidden, padding_mask_mt = model.encoder.encode_text(sample["source"])
+            text_hidden, padding_mask_mt = text_hidden[1:, :, :], padding_mask_mt[:, 2:]
+            # remove eos tokens in text embedding by add a mask position
+            padding_mask_mt = torch.cat(
+                (
+                    padding_mask_mt,
+                    torch.tensor(
+                        [[1]],
+                        device=padding_mask_mt.device,
+                        dtype=padding_mask_mt.dtype
+                    ).expand(padding_mask_mt.size(0), -1)
+                ),
+                dim=-1
             )
+            # flatten feats and padding masks
+            audio_hidden = audio_hidden.transpose(0, 1).contiguous().view(-1, audio_hidden.size(-1))
+            text_hidden = text_hidden.transpose(0, 1).contiguous().view(-1, text_hidden.size(-1))
+            padding_mask_st = padding_mask_st.contiguous().view(-1)
+            padding_mask_mt = padding_mask_mt.contiguous().view(-1)
+
+            audio_indices = torch.nonzero((~padding_mask_st).int(), as_tuple=True)
+            text_indices = torch.nonzero((~padding_mask_mt).int(), as_tuple=True)
+            audio_hidden = audio_hidden.index_select(0, audio_indices[0])
+            text_hidden = text_hidden.index_select(0, text_indices[0])
+            assert audio_hidden.size(0) == text_hidden.size(0)
+            sim_matrix = F.cosine_similarity(
+                audio_hidden.unsqueeze(0),
+                text_hidden.unsqueeze(1),
+                dim=-1
+            )
+            sim_matrix /= self.contrastive_temperature
+            if self.use_dual_ctr:
+                contrastive_loss = 0.5 * (-torch.nn.LogSoftmax(0)(sim_matrix).diag() +
+                                          -torch.nn.LogSoftmax(1)(sim_matrix).diag())
+            else:
+                contrastive_loss = -torch.nn.LogSoftmax(0)(sim_matrix).diag()
+
         return contrastive_loss.sum() if reduce else contrastive_loss
 
     def get_seq_hidden(self, encoder_states_list, padding_mask):

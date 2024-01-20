@@ -61,7 +61,7 @@ def main(args):
         else None
     )
     num_samples = 0
-    with open(os.path.join(args.dest, "train.tsv"), "w") as train_f:
+    with open(os.path.join(args.dest, "dev_other.tsv"), "w") as train_f:
         print(dir_path, file=train_f)
 
         if valid_f is not None:

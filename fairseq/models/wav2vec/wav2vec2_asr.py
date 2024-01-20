@@ -198,7 +198,7 @@ class Wav2Vec2AsrConfig(FairseqDataclass):
         default=False,
         metadata={"help": "shared weight between ctc and cif proj"}
     )
-    sub_sampler:bool = field(
+    sub_sampler: bool = field(
         default=False,
         metadata={"help": "sub_sampler after wav2vec"}
     )
@@ -208,6 +208,7 @@ class Wav2Vec2AsrConfig(FairseqDataclass):
     )
     textual_encoder_embed_dim: int = 512
     conv_kernel_sizes: str = "5,5"
+
 
 @register_model("wav2vec_ctc", dataclass=Wav2Vec2AsrConfig)
 class Wav2VecCtc(BaseFairseqModel):
@@ -236,13 +237,12 @@ class Wav2VecCtc(BaseFairseqModel):
             )
         else:
             self.textual_dim_proj = nn.Sequential(
+                LayerNorm(self.hidden_dim),
                 Linear(self.hidden_dim, 1024),
-                nn.Dropout(p=cfg.dropout, inplace=True),
                 nn.GELU(),
-                Linear(1024, cfg.textual_encoder_embed_dim),
-                nn.Dropout(p=cfg.dropout, inplace=True),
-                LayerNorm(cfg.textual_encoder_embed_dim),
+                Linear(1024, cfg.textual_encoder_embed_dim)
             )
+            # self.self.textual_dim_proj = Linear(self.hidden_dim, cfg.textual_encoder_embed_dim)
         self._build_cif(cfg)
 
     def upgrade_state_dict_named(self, state_dict, name):
@@ -274,7 +274,7 @@ class Wav2VecCtc(BaseFairseqModel):
             return utils.softmax(logits.float(), dim=-1)
 
     def get_ctc_output(self, net_output):
-        logits = net_output["ctc_proj_out"] # (B, T, C)
+        logits = net_output["ctc_proj_out"]  # (B, T, C)
         lprobs = utils.log_softmax(logits.float(), dim=-1)
         lens = lprobs.new_full((lprobs.shape[0],), lprobs.shape[1]).long()
         if len(net_output["padding_mask"]) > 0:
@@ -284,7 +284,7 @@ class Wav2VecCtc(BaseFairseqModel):
     def get_ctc_target(self, sample):
         return sample["target"].long(), sample["target_lengths"].long()
 
-    def extract_features(self, transcript_lengths, source, padding_mask, freeze_w2v):
+    def extract_features(self, transcript_lengths, source, padding_mask, freeze_w2v, use_ctc):
         """
             similar to forward but only extract acoustic features
         """
@@ -300,7 +300,7 @@ class Wav2VecCtc(BaseFairseqModel):
             x["encoder_out"] = feats.transpose(1, 0).contiguous() 
             x["padding_mask"] = lengths_to_padding_mask(output_length)
         else:
-            x["encoder_out"] = self.textual_dim_proj(x["encoder_out"]) # 768 -> 512
+            x["encoder_out"] = self.textual_dim_proj(x["encoder_out"])  # 768 -> 512
         
         if self.training:
             assert transcript_lengths is not None
@@ -310,12 +310,8 @@ class Wav2VecCtc(BaseFairseqModel):
             x["padding_mask"],
             transcript_lengths
         )
-        return cif_out["cif_out"][0], cif_out["cif_length"][0], cif_out["alpha"][0] # cif aggraved features
+        return cif_out["cif_out"][0], cif_out["cif_length"][0], cif_out["alpha"][0]  # cif aggraved features
 
-    def remove_pretrain_modules(self):
-        self.ctc_proj = None
-        self.cif_proj = None
-    
     def forward(self, transcript_lengths, source, padding_mask, **kwargs):
         x = self.w2v_encoder(source, padding_mask, **kwargs)
 
@@ -338,7 +334,7 @@ class Wav2VecCtc(BaseFairseqModel):
             transcript_lengths
         )
         
-        if self.cif_proj: # not share parameters
+        if self.cif_proj:  # not share parameters
             cif_proj_out = self.cif_proj(cif_out["cif_out"][0])
         else:
             cif_proj_out = self.ctc_proj(cif_out["cif_out"][0])
@@ -389,7 +385,7 @@ class Wav2VecEncoder(FairseqEncoder):
             w2v_args = cfg.w2v_args
             if isinstance(w2v_args, dict):
                 cfg.w2v_args = w2v_args = OmegaConf.create(w2v_args)
-            if isinstance(w2v_args, Namespace): # cfg should be instanced of Namespace
+            if isinstance(w2v_args, Namespace):  # cfg should be instanced of Namespace
                 cfg.w2v_args = w2v_args = convert_namespace_to_omegaconf(w2v_args)
 
         model_normalized = w2v_args.task.get(
@@ -471,6 +467,15 @@ class Wav2VecEncoder(FairseqEncoder):
         super().set_num_updates(num_updates)
         self.num_updates = num_updates
 
+    def extract_features(self, source, padding_mask, mask=False):
+        w2v_args = {
+            "source": source,
+            "padding_mask": padding_mask,
+            "mask": mask,
+        }
+        x, padding_mask = self.w2v_model.extract_features(**w2v_args)
+        return x, padding_mask
+
     def forward(self, source, padding_mask, **kwargs):
 
         w2v_args = {
@@ -481,7 +486,7 @@ class Wav2VecEncoder(FairseqEncoder):
         if "corpus_key" in kwargs:
             w2v_args["corpus_key"] = kwargs["corpus_key"]
         if "mask" in kwargs:
-            w2v_args["mask"] = kwargs["mask"]
+            w2v_args["mask"] = kwargs["mask"]  # if st task, mask set to false by default
 
         ft = self.freeze_finetune_updates <= self.num_updates
 
@@ -489,7 +494,7 @@ class Wav2VecEncoder(FairseqEncoder):
             res = self.w2v_model.extract_features(**w2v_args)
 
             x, padding_mask = res
-            if padding_mask == None:
+            if padding_mask is None:
                 padding_mask = torch.zeros((x.shape[0], x.shape[1]), dtype=bool, device=x.device)
             # else:
             #     padding_mask = res["padding_mask"]
@@ -498,8 +503,7 @@ class Wav2VecEncoder(FairseqEncoder):
 
         return {
             "encoder_out": x,  # B x T x C
-            "padding_mask": padding_mask,  # B x T,
-            #"layer_results": res["layer_results"],
+            "padding_mask": padding_mask,  # B x T
         }
 
     def forward_torchscript(self, net_input):

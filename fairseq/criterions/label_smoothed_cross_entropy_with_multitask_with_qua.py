@@ -4,16 +4,18 @@ from dataclasses import dataclass, field
 import torch.nn.functional as F
 from fairseq import metrics, utils
 from fairseq.criterions import register_criterion
-from fairseq.criterions.label_smoothed_cross_entropy_with_mt_multitask import (
-    LabelSmoothedCrossEntropyWithMtMultitaskConfig,
-    LabelSmoothedCrossEntropyWithMtMultitask
+from fairseq.criterions.label_smoothed_cross_entropy_with_multitask import (
+    LabelSmoothedCrossEntropyWithMultitaskConfig,
+    LabelSmoothedCrossEntropyWithMultitask
 )
+
+
 @register_criterion(
-    "label_smoothed_cross_entropy_with_mt_multitask_with_qua", 
-    dataclass=LabelSmoothedCrossEntropyWithMtMultitaskConfig
+    "label_smoothed_cross_entropy_with_multitask_with_qua",
+    dataclass=LabelSmoothedCrossEntropyWithMultitaskConfig
 )
-class LabelSmoothedCrossEntropyWithMtMultitaskWithQua(
-    LabelSmoothedCrossEntropyWithMtMultitask
+class LabelSmoothedCrossEntropyWithMultitaskWithQua(
+    LabelSmoothedCrossEntropyWithMultitask
 ):
     def __init__(
         self,

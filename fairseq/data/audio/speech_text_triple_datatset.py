@@ -102,15 +102,15 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
         src_text = None
         if self.src_texts is not None:
             tokenized = self.src_texts[index]
-            if self.src_dict is None: # use joint dict if src dict is none
+            if self.src_dict is None:  # use joint dict if src dict is none
                 if self.pre_tokenizer is not None:
                     tokenized = self.tokenize(self.pre_tokenizer, self.src_texts[index])
                 if self.bpe_tokenizer is not None:
                     tokenized = self.tokenize(self.bpe_tokenizer, tokenized)
-                src_text = self.tgt_dict.encode_line( # actually joint dict
+                src_text = self.tgt_dict.encode_line(  # actually joint dict
                     tokenized, add_if_not_exist=False, append_eos=True
                 ).long()
-            else:  # use pho src dict, no need for pbe
+            else:  # use pho src dict, no need for bpe
                 src_text = self.src_dict.encode_line(
                     tokenized, add_if_not_exist=False, append_eos=True
                 ).long()
@@ -226,20 +226,20 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
         out = {
             "id": indices,
             "net_input": {
-                "src_tokens": frames, # source audio
+                "src_tokens": frames,  # source audio
                 "src_lengths": n_frames,
                 "prev_output_tokens": prev_output_target_tokens,
                 # subtract lang tag length, num of fires only depends on real text length
                 "transcript_lengths": source_lengths - 2
             },
-            "target": target, # target text
+            "target": target,  # target text
             "target_lengths": target_lengths,
             "target_ntokens": tgt_ntokens,
             "nsentences": len(samples),
-            "source": source, # transcript
-            "source_lengths": source_lengths, # transcript lengths
+            "source": source,  # transcript
+            "source_lengths": source_lengths,  # transcript lengths
             "source_ntokens": src_ntokens,
-            "prev_output_src_tokens": prev_output_source_tokens,
+            "prev_output_src_tokens": prev_output_source_tokens,  # for asr multitask
             "dataset_type": self.dataset_type
         }
         return out

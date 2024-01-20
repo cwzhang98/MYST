@@ -57,7 +57,7 @@ class AddTargetDataset(BaseWrapperDataset):
         if self.add_to_input:
             eos = torch.LongTensor([self.eos])
             prev_output_tokens = [torch.cat([eos, t], axis=-1) for t in target]
-            target = [torch.cat([t, eos], axis=-1) for t in target]
+            # target = [torch.cat([t, eos], axis=-1) for t in target]
             collated["net_input"]["prev_output_tokens"] = prev_output_tokens
 
         if self.batch_targets:

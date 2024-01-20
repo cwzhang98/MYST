@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 import torch.nn.functional as F
 from fairseq import metrics, utils
 from fairseq.criterions import register_criterion
+from omegaconf import II
+from fairseq.data.data_utils import lengths_to_mask
 
 from fairseq.criterions.label_smoothed_cross_entropy import (
     LabelSmoothedCrossEntropyCriterionConfig,
@@ -13,20 +15,25 @@ from fairseq.criterions.label_smoothed_cross_entropy import (
 
 
 @dataclass
-class LabelSmoothedCrossEntropyWithMtMultitaskConfig(
+class LabelSmoothedCrossEntropyWithMultitaskConfig(
     LabelSmoothedCrossEntropyCriterionConfig
 ):
     use_jsd: bool = field(
         default=False,
         metadata={"help": "use jsd loss or not"}
     )
+    asr_task: bool = field(
+        default=False,
+        metadata={"help": "use asr multitask"}
+    )
+    use_ctc: bool = II("model.use_ctc")
 
 
 @register_criterion(
-    "label_smoothed_cross_entropy_with_mt_multitask",
-    dataclass=LabelSmoothedCrossEntropyWithMtMultitaskConfig
+    "label_smoothed_cross_entropy_with_multitask",
+    dataclass=LabelSmoothedCrossEntropyWithMultitaskConfig
 )
-class LabelSmoothedCrossEntropyWithMtMultitask(
+class LabelSmoothedCrossEntropyWithMultitask(
     LabelSmoothedCrossEntropyCriterion
 ):
     def __init__(
@@ -37,14 +44,20 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
             ignore_prefix_size=0,
             report_accuracy=False,
             use_jsd=False,
+            asr_task=False,
+            use_ctc=False
     ):
         super().__init__(task, sentence_avg, label_smoothing, ignore_prefix_size, report_accuracy)
         self.use_jsd = use_jsd
+        self.asr_task = asr_task
+        self.use_ctc = use_ctc
+        self.blank_idx = task.tgt_dict.bos()
 
     def forward(self, model, sample, reduce=True):
         net_output = model(**sample["net_input"], is_audio_input=True)
         st_loss, nll_loss_st = torch.tensor(0.), torch.tensor(0.)
         mt_loss, nll_loss_mt = torch.tensor(0.), torch.tensor(0.)
+        asr_loss, nll_loss_asr = torch.tensor(0.), torch.tensor(0.)
         jsd_loss = torch.tensor(0.)
         if model.training:
             net_output, _ = net_output
@@ -54,17 +67,24 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
             if model.training:
                 mt_loss, nll_loss_mt, lprobs_mt = self.compute_loss_mt(
                     model, sample, reduce=reduce)
+                if self.asr_task:
+                    if self.use_ctc:
+                        asr_loss = self.compute_loss_ctc(model, sample, reduce=reduce)
+                    else:
+                        asr_loss, nll_loss_asr = self.compute_loss_asr(model, sample, reduce=reduce)
                 if self.use_jsd:
                     jsd_loss = self.compute_loss_jsd(lprobs_st, lprobs_mt, target, reduce=reduce)
 
-        loss = st_loss + mt_loss + jsd_loss
+        loss = st_loss + mt_loss + asr_loss + jsd_loss
         sample_size = (
-            sample["target"].size(0) if self.sentence_avg else sample["ntokens"]
+            sample["target"].size(0) if self.sentence_avg else sample["target_ntokens"]
         )
         logging_output = {
             "loss": utils.item(loss.data),
             "nll_loss": utils.item(nll_loss_st.data),
             "nll_loss_mt": utils.item(nll_loss_mt.data),
+            "nll_loss_asr": utils.item(nll_loss_asr.data),
+            "ctc_loss": utils.item(asr_loss.data) if self.use_ctc else 0,
             "jsd_loss": utils.item(jsd_loss.data),
             "ntokens": sample["target_ntokens"],
             "nsentences": sample["nsentences"],
@@ -109,6 +129,46 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
         )
         return loss, nll_loss, lprobs
 
+    def compute_loss_asr(self, model, sample, reduce=True):
+        decoder_out, encoder_out = model(
+            sample["net_input"]["src_tokens"],
+            sample["net_input"]["src_lengths"],
+            sample["prev_output_src_tokens"]
+        )
+        lprobs = model.get_normalized_probs(decoder_out, log_probs=True)
+        target = sample["source"]
+        if self.ignore_prefix_size > 0:
+            lprobs = lprobs[:, self.ignore_prefix_size:, :].contiguous()
+            target = target[:, self.ignore_prefix_size:].contiguous()
+        lprobs = lprobs.view(-1, lprobs.size(-1))
+        target = target.view(-1)
+        loss, nll_loss = label_smoothed_nll_loss(
+            lprobs, target, self.eps, ignore_index=self.padding_idx, reduce=reduce
+        )
+        return loss, nll_loss
+
+    def compute_loss_ctc(self, model, sample, reduce=True):
+        ctc_logits, padding_mask, ctc_lprobs = model.encoder.compute_ctc_logits_and_lprobs(
+            sample["net_input"]["src_tokens"],
+            sample["net_input"]["src_lengths"],
+        )
+        ctc_lens = ctc_lprobs.new_full((ctc_lprobs.shape[1],), ctc_lprobs.shape[0]).long()
+        ctc_lens -= padding_mask.long().sum(dim=-1)
+        ctc_tgt, ctc_tgt_lens = sample["source"], sample["source_lengths"]
+        ctc_tgt_mask = lengths_to_mask(ctc_tgt_lens)
+        ctc_tgt_flat = ctc_tgt.masked_select(ctc_tgt_mask)
+        reduction = "sum" if reduce else "None"
+        ctc_loss = F.ctc_loss(
+            ctc_lprobs,
+            ctc_tgt_flat,
+            ctc_lens,
+            ctc_tgt_lens,
+            blank=self.blank_idx,
+            reduction=reduction,
+            zero_infinity=True
+        )
+        return ctc_loss
+
     def compute_loss_jsd(self, lprobs_st, lprobs_mt, target, reduce=True):
         lprobs_mix = 0.5 * (lprobs_st + lprobs_mt)
         kl_st = F.kl_div(lprobs_mix, lprobs_st, log_target=True, reduction="none").sum(-1)
@@ -127,7 +187,9 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
         loss_sum = sum(log.get("loss", 0) for log in logging_outputs)
         nll_loss_st_sum = sum(log.get("nll_loss", 0) for log in logging_outputs)
         nll_loss_mt_sum = sum(log.get("nll_loss_mt", 0) for log in logging_outputs)
+        nll_loss_asr_sum = sum(log.get("nll_loss_asr", 0) for log in logging_outputs)
         jsd_loss_sum = sum(log.get("jsd_loss", 0) for log in logging_outputs)
+        ctc_loss_sum = sum(log.get("ctc_loss", 0) for log in logging_outputs)
         sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
         metrics.log_scalar("loss",
                            loss_sum / sample_size / math.log(2), sample_size, round=3)
@@ -135,6 +197,12 @@ class LabelSmoothedCrossEntropyWithMtMultitask(
                            nll_loss_st_sum / sample_size / math.log(2), sample_size, round=3)
         metrics.log_scalar("nll_loss_mt",
                            nll_loss_mt_sum / sample_size / math.log(2), sample_size, round=3)
+        if nll_loss_asr_sum > 0:
+            metrics.log_scalar("nll_loss_asr",
+                               nll_loss_asr_sum / sample_size / math.log(2), sample_size, round=3)
+        if ctc_loss_sum > 0:
+            metrics.log_scalar("ctc_loss",
+                               ctc_loss_sum / sample_size / math.log(2), sample_size, round=3)
         if jsd_loss_sum > 0:
             metrics.log_scalar("jsd_loss",
                                jsd_loss_sum / sample_size / math.log(2), sample_size, round=3)

@@ -280,7 +280,7 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
         if muti_contrast or contrast_granularity == "fine":  # word level loss
             # remove lang tag feature
             text_embedding, _text_padding_mask = text_embedding[1:, :, :], text_padding_mask[:, 2:]
-            # remove eos tokens in text embedding by add an additional mask position
+            # remove eos tokens in text embedding by add a mask position
             _text_padding_mask = torch.cat(
                 (
                     _text_padding_mask,
@@ -301,7 +301,7 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
                 .view(-1, text_embedding.size(-1))
             audio_padding_mask_flat = audio_padding_mask.contiguous().view(-1)
             text_padding_mask_flat = _text_padding_mask.contiguous().view(-1)
-            # selet feats according to mask
+            # select feats according to mask
             audio_index = torch.nonzero((~audio_padding_mask_flat).int(), as_tuple=True)
             text_index = torch.nonzero((~text_padding_mask_flat).int(), as_tuple=True)
             audio_feats = audio_embedding.index_select(0, audio_index[0])  # (B x T) x C
@@ -319,7 +319,7 @@ class LabelSmoothedCrossEntropyWithIsoConstrast(
             sim_matrix /= self.contrastive_temperature
             if self.use_dual_ctr:
                 fine_loss = 0.5 * (
-                        -torch.nn.LogSoftmax(0)(sim_matrix).diag() + \
+                        -torch.nn.LogSoftmax(0)(sim_matrix).diag() +
                         -torch.nn.LogSoftmax(1)(sim_matrix).diag()
                 )
             else:

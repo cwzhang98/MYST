@@ -21,7 +21,7 @@ task:
   enable_padding: true
 
 dataset:
-  num_workers: 4
+  num_workers: 8
   max_tokens: 5000000
   skip_invalid_size_inputs_valid_test: true
   valid_subset: dev_clean,dev_other
@@ -39,10 +39,10 @@ criterion:
 
 optimization:
   max_update: 500000
-  clip_norm: 10.0
+  clip_norm: 0.1
   lr: [1e-4]
-  sentence_avg: true
-  update_freq: [2]
+  # sentence_avg: true
+  update_freq: [1]
 
 optimizer:
   _name: adam
@@ -57,22 +57,16 @@ model:
   _name: wav2vec_ctc
   w2v_path: ???
   apply_mask: true
-  mask_prob: 0.5
-  no_mask_overlap: true
-  mask_min_space: 10
-  mask_dropout: 0.2
+  mask_prob: 0.3
+  # no_mask_overlap: true
+  # mask_min_space: 10
+  # mask_dropout: 0.2
   mask_channel_prob: 0.1
-  mask_channel_length: 10
-  no_mask_channel_overlap: true
-  mask_channel_min_space: 10
+  mask_channel_length: 64
   dropout: 0.1
-  activation_dropout: 0.0
-  feature_grad_mult: 0.0
-  freeze_finetune_updates: 4000
   weight_predictor_stop_gradient: true
   use_attention: true
   cif_attention_dropout: 0.1
   beta: 1.0
   ctc_joint_training: true
   shared_proj: true
-  sub_sampler: false

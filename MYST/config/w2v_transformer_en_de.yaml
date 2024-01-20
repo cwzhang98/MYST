@@ -2,11 +2,11 @@ common:
   fp16: true
   log_format: json
   log_interval: 100
-  tensorboard_logdir: /home2/cwzhang98/project/MYST/st_train_log
+  tensorboard_logdir:  ???
 
 checkpoint:
-  save_dir: /home2/cwzhang98/project/MYST/checkpoint
-  restore_file: /home2/cwzhang98/project/MYST/checkpoint/checkpoint_last.pt
+  save_dir: ???
+  restore_file: ???
   # save-interval-updates: 1000
   # save-interval: 1
   # keep_last_epochs: 10
@@ -19,14 +19,14 @@ checkpoint:
 task:
   _name: speech_to_text_cif_muti_contrast
   data: ???
-  config_yaml: /home2/cwzhang98/project/dataset/MuSTC/en-de/config_st.yaml
+  config_yaml: ???
   eval_bleu: true
   eval_bleu_detok: moses
   eval_tokenized_bleu: false
   eval_bleu_bpe: sentencepiece
   eval_bleu_args: '{"beam": 5, "prefix_size": 1, "lenpen": 0.6}'
   eval_bleu_print_samples: true
-  use_joint_dict: false
+  use_joint_dict: true
 
 criterion:
   _name: label_smoothed_cross_entropy
@@ -36,8 +36,8 @@ criterion:
 
 model:
   _name: s2t_transformer_with_cif_contrast
-  w2v_model_path: /home2/cwzhang98/project/MYST/checkpoints/wav2vec_small.pt
-  freeze_w2v: true
+  w2v_model_path: ???
+  freeze_w2v: false
   activation_fn: relu
   dropout: 0.1
   attention_dropout: 0.1
@@ -55,27 +55,28 @@ model:
   decoder_attention_heads: 8
   decoder_normalize_before: true
   share_decoder_input_output_embed: true
-  layernorm_embedding: true
+  layernorm_embedding: false
   no_scale_embedding: false
   ablation_type: w2v_transformer
 
 dataset:
   num_workers: 32
-  max_tokens: 3000000
+  max_tokens: 2500000
   train_subset: train_st
   valid_subset: dev_st
   update_epoch_batch_itr: false
   skip_invalid_size_inputs_valid_test: true
+  batch_size: 100
 
 distributed_training:
   ddp_backend: legacy_ddp # same as legacy_ddp
-  distributed_world_size: 1
+  distributed_world_size: 2
 
 optimization:
   max_update: 500000
   clip_norm: 10.0
   lr: [1e-4]
-  sentence_avg: true
+#  sentence_avg: true
   update_freq: [2]
 
 optimizer:

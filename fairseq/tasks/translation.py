@@ -11,6 +11,7 @@ import os
 from typing import Optional
 from argparse import Namespace
 from omegaconf import II
+import torch
 
 import numpy as np
 from fairseq import utils
@@ -29,6 +30,7 @@ from fairseq.data import (
 from fairseq.data.indexed_dataset import get_available_dataset_impl
 from fairseq.dataclass import ChoiceEnum, FairseqDataclass
 from fairseq.tasks import FairseqTask, register_task
+from fairseq.data.audio.speech_text_triple_datatset import SpeechTextTripleDataset
 
 
 EVAL_BLEU_ORDER = 4
@@ -199,7 +201,7 @@ class TranslationConfig(FairseqDataclass):
         default=False, metadata={"help": "load the binarized alignments"}
     )
     left_pad_source: bool = field(
-        default=True, metadata={"help": "pad the source on the left"}
+        default=False, metadata={"help": "pad the source on the left"}
     )
     left_pad_target: bool = field(
         default=False, metadata={"help": "pad the target on the left"}
@@ -262,6 +264,14 @@ class TranslationConfig(FairseqDataclass):
     )
     eval_bleu_print_samples: bool = field(
         default=False, metadata={"help": "print sample generations during validation"}
+    )
+    eval_bleu_bpe: Optional[bool] = field(
+        default=True,
+        metadata={"help": "args for building the bpe, if needed"}
+    )
+    spm_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "abs path for spm model"}
     )
 
 
@@ -373,12 +383,32 @@ class TranslationTask(FairseqTask):
             self.tokenizer = encoders.build_tokenizer(
                 Namespace(tokenizer=self.cfg.eval_bleu_detok, **detok_args)
             )
-
+            if self.cfg.eval_bleu_bpe is not None:
+                self.bpe = self.build_bpe(Namespace(bpe='sentencepiece', sentencepiece_model=self.cfg.spm_path))
+            else:
+                self.bpe = None
             gen_args = json.loads(self.cfg.eval_bleu_args)
             self.sequence_generator = self.build_generator(
                 [model], Namespace(**gen_args)
             )
         return model
+
+    def build_generator(
+        self,
+        models,
+        args,
+        seq_gen_cls=None,
+        extra_gen_cls_kwargs=None,
+        prefix_allowed_tokens_fn=None,
+    ):
+        lang_token_ids = {
+            self.tgt_dict.indices[SpeechTextTripleDataset.LANG_TAG_TEMPLATE.format(self.cfg.target_lang)]
+        }
+        # remove language token during generating
+        extra_gen_cls_kwargs = {"symbols_to_strip_from_output": lang_token_ids}
+        return super().build_generator(
+            models, args, seq_gen_cls, extra_gen_cls_kwargs, prefix_allowed_tokens_fn
+        )
 
     def valid_step(self, sample, model, criterion):
         loss, sample_size, logging_output = super().valid_step(sample, model, criterion)
@@ -461,6 +491,28 @@ class TranslationTask(FairseqTask):
         """Return the target :class:`~fairseq.data.Dictionary`."""
         return self.tgt_dict
 
+    def inference_step(
+        self,
+        generator,
+        models,
+        sample,
+        prefix_tokens=None,
+        constraints=None
+    ):
+        prefix_tokens = self.tgt_dict.index(SpeechTextTripleDataset.LANG_TAG_TEMPLATE.format(self.cfg.target_lang))
+        with torch.no_grad():
+            net_input = sample["net_input"]
+            assert "src_tokens" in net_input, "Missing `src_tokens`"
+            src_tokens = net_input["src_tokens"]
+            B = src_tokens.size()[0]
+            if prefix_tokens is not None:
+                if isinstance(prefix_tokens, int):
+                    prefix_tokens = torch.LongTensor([prefix_tokens]).unsqueeze(1)
+                    prefix_tokens = prefix_tokens.expand(B, -1).to(src_tokens.device)
+            return generator.generate(
+                models, sample, prefix_tokens=prefix_tokens, constraints=constraints
+            )
+
     def _inference_with_bleu(self, generator, sample, model):
         import sacrebleu
 
@@ -475,6 +527,8 @@ class TranslationTask(FairseqTask):
                 # reference, but doesn't get split into multiple tokens.
                 unk_string=("UNKNOWNTOKENINREF" if escape_unk else "UNKNOWNTOKENINHYP"),
             )
+            if self.bpe is not None:
+                s = self.bpe.decode(s)
             if self.tokenizer:
                 s = self.tokenizer.decode(s)
             return s
@@ -482,12 +536,15 @@ class TranslationTask(FairseqTask):
         gen_out = self.inference_step(generator, [model], sample, prefix_tokens=None)
         hyps, refs = [], []
         for i in range(len(gen_out)):
-            hyps.append(decode(gen_out[i][0]["tokens"]))
+            hyps.append(
+                decode(gen_out[i][0]["tokens"])
+                .replace(SpeechTextTripleDataset.LANG_TAG_TEMPLATE.format(self.cfg.target_lang), "").strip()
+            )
             refs.append(
                 decode(
                     utils.strip_pad(sample["target"][i], self.tgt_dict.pad()),
                     escape_unk=True,  # don't count <unk> as matches to the hypo
-                )
+                ).replace(SpeechTextTripleDataset.LANG_TAG_TEMPLATE.format(self.cfg.target_lang), "").strip()
             )
         if self.cfg.eval_bleu_print_samples:
             logger.info("example hypothesis: " + hyps[0])

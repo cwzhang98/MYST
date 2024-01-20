@@ -26,10 +26,10 @@ task:
   eval_bleu_bpe: sentencepiece
   eval_bleu_args: '{"beam": 5, "prefix_size": 1, "lenpen": 0.6}'
   eval_bleu_print_samples: true
-  use_joint_dict: false
+  use_joint_dict: true
 
 criterion:
-  _name: label_smoothed_cross_entropy_with_mt_multitask_contrastive
+  _name: label_smoothed_cross_entropy_with_multitask_contrastive
   label_smoothing: 0.1
   report_accuracy: true
   ignore_prefix_size: 1
@@ -37,12 +37,13 @@ criterion:
   contrast_granularity: coarse
   contrast_level: low
   contrastive_temperature: 0.02
-  contrastive_weight: 1.0
+  contrastive_weight: 1.5
+  asr_task: true
 
 model:
   _name: s2t_transformer_with_cif_contrast
   w2v_model_path: ???
-  freeze_w2v: true
+  freeze_w2v: false
   activation_fn: relu
   dropout: 0.1
   attention_dropout: 0.1
@@ -60,29 +61,30 @@ model:
   decoder_attention_heads: 8
   decoder_normalize_before: true
   share_decoder_input_output_embed: true
-  layernorm_embedding: true
+  layernorm_embedding: false
   no_scale_embedding: false
   ablation_type: w2v_transformer
+  use_ctc: true
 
 dataset:
   num_workers: 32
-  max_tokens: 5000000
+  max_tokens: 2000000
   train_subset: train_st
   valid_subset: dev_st
   update_epoch_batch_itr: false
   skip_invalid_size_inputs_valid_test: true
-  batch_size: 200
+  batch_size: 100
 
 distributed_training:
-  ddp_backend: legacy_ddp # same as legacy_ddp
-  distributed_world_size: 1
+  ddp_backend: legacy_ddp
+  distributed_world_size: 2
 
 optimization:
   max_update: 500000
   clip_norm: 10.0
   lr: [1e-4]
-  sentence_avg: true
-  update_freq: [2]
+#  sentence_avg: true
+  update_freq: [1]
 
 optimizer:
   _name: adam

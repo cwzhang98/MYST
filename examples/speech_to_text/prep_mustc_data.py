@@ -139,7 +139,7 @@ def process(args):
             manifest["src_lang"].append("en")
             manifest["tgt_lang"].append(lang)
         if is_train_split:
-            train_text_mono.extend(manifest["tgt_text"]) # train spm only using target text
+            train_text_mono.extend(manifest["tgt_text"])  # train spm only using target text
             train_text_bi.extend(manifest["tgt_text"])
             train_text_bi.extend(manifest["src_text_raw"])
         df = pd.DataFrame.from_dict(manifest)
