@@ -68,7 +68,7 @@ model:
 
 dataset:
   num_workers: 32
-  max_tokens: 2000000
+  max_tokens: 3000000
   train_subset: train_st
   valid_subset: dev_st
   update_epoch_batch_itr: false
