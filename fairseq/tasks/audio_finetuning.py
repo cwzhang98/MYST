@@ -129,7 +129,7 @@ class AudioFinetuningTask(AudioPretrainingTask):
             target_dictionary = self.cfg.data
             if self.cfg.target_dictionary:  # override dict
                 target_dictionary = self.cfg.target_dictionary
-            dict_path = os.path.join(target_dictionary, f"dict.{self.cfg.labels}.txt")
+            dict_path = os.path.join(target_dictionary, "spm_unigram_10000_st.txt")
             logger.info('Using dict_path : {}'.format(dict_path))
             return Dictionary.load(dict_path)
         return None

@@ -59,10 +59,11 @@ class LabelSmoothedCrossEntropyWithMultitaskContrastiveCriterion(
             contrastive_weight=1.0,
             use_dual_ctr=False,
             asr_task=False,
-            use_ctc=False
+            use_ctc=False,
+            model_type=""
     ):
         super().__init__(task, sentence_avg, label_smoothing, ignore_prefix_size,
-                         report_accuracy, use_jsd, asr_task, use_ctc)
+                         report_accuracy, use_jsd, asr_task, use_ctc, model_type)
         self.contrast_granularity = contrast_granularity
         self.contrast_level = contrast_level
         self.contrastive_temperature = contrastive_temperature
@@ -75,6 +76,7 @@ class LabelSmoothedCrossEntropyWithMultitaskContrastiveCriterion(
         mt_loss, nll_loss_mt = torch.tensor(0.), torch.tensor(0.)
         asr_loss, nll_loss_asr = torch.tensor(0.), torch.tensor(0.)
         jsd_loss, contrastive_loss = torch.tensor(0.), torch.tensor(0.)
+        qua_loss = torch.tensor(0.)
         if model.training:
             net_output, encoder_out_st = net_output
         if sample["target"] is not None:
@@ -85,7 +87,14 @@ class LabelSmoothedCrossEntropyWithMultitaskContrastiveCriterion(
                     model, sample, reduce=reduce)
                 if self.asr_task:
                     if self.use_ctc:
-                        asr_loss = self.compute_loss_ctc(model, sample, reduce=reduce)
+                        ctc_padding_mask = encoder_out_st["ctc_padding_mask"][0] \
+                            if encoder_out_st["ctc_padding_mask"] is not None else encoder_out_st["encoder_padding_mask"][0]
+                        asr_loss = self.compute_loss_ctc(
+                            sample,
+                            encoder_out_st["ctc_logits"][0],
+                            ctc_padding_mask,
+                            reduce=reduce
+                        )
                     else:
                         asr_loss, nll_loss_asr = self.compute_loss_asr(model, sample, reduce=reduce)
                 if self.use_jsd:
@@ -94,8 +103,10 @@ class LabelSmoothedCrossEntropyWithMultitaskContrastiveCriterion(
                     contrastive_loss = self.compute_contrastive_loss(
                         model, sample, encoder_out_st, encoder_out_mt,
                         self.contrast_granularity, self.contrast_level, reduce=reduce)
-
-        loss = st_loss + mt_loss + asr_loss + jsd_loss + self.contrastive_weight * contrastive_loss
+                if self.model_type != "w2v_transformer":
+                    assert sample["net_input"]["transcript_lengths"] is not None
+                    qua_loss = self.compute_qua_loss(encoder_out_st, sample["net_input"]["transcript_lengths"])
+        loss = st_loss + mt_loss + asr_loss + jsd_loss + qua_loss + self.contrastive_weight * contrastive_loss
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else sample["target_ntokens"]
         )
@@ -106,6 +117,7 @@ class LabelSmoothedCrossEntropyWithMultitaskContrastiveCriterion(
             "nll_loss_asr": utils.item(nll_loss_asr.data),
             "ctc_loss": utils.item(asr_loss.data) if self.use_ctc else 0,
             "jsd_loss": utils.item(jsd_loss.data),
+            "qua_loss": utils.item(qua_loss),
             "contrastive_loss": utils.item(contrastive_loss.data),
             "ntokens": sample["target_ntokens"],
             "nsentences": sample["nsentences"],
@@ -192,37 +204,39 @@ class LabelSmoothedCrossEntropyWithMultitaskContrastiveCriterion(
             else:
                 audio_out = model.encoder.encode_audio(
                     sample["net_input"]["src_tokens"],
-                    sample["net_input"]["src_lengths"]
+                    sample["net_input"]["src_lengths"],
+                    sample["net_input"]["transcript_lengths"]
                 )
                 audio_hidden, padding_mask_st = audio_out[0], audio_out[1]
                 text_hidden, padding_mask_mt = model.encoder.encode_text(sample["source"])
-            text_hidden, padding_mask_mt = text_hidden[1:, :, :], padding_mask_mt[:, 2:]
+            # text_hidden, padding_mask_mt = text_hidden[1:, :, :], padding_mask_mt[:, 2:]
             # remove eos tokens in text embedding by add a mask position
-            padding_mask_mt = torch.cat(
-                (
-                    padding_mask_mt,
-                    torch.tensor(
-                        [[1]],
-                        device=padding_mask_mt.device,
-                        dtype=padding_mask_mt.dtype
-                    ).expand(padding_mask_mt.size(0), -1)
-                ),
-                dim=-1
-            )
+            # padding_mask_mt = torch.cat(
+            #     (
+            #         padding_mask_mt,
+            #         torch.tensor(
+            #             [[1]],
+            #             device=padding_mask_mt.device,
+            #             dtype=padding_mask_mt.dtype
+            #         ).expand(padding_mask_mt.size(0), -1)
+            #     ),
+            #     dim=-1
+            # )
             # flatten feats and padding masks
             audio_hidden = audio_hidden.transpose(0, 1).contiguous().view(-1, audio_hidden.size(-1))
             text_hidden = text_hidden.transpose(0, 1).contiguous().view(-1, text_hidden.size(-1))
             padding_mask_st = padding_mask_st.contiguous().view(-1)
             padding_mask_mt = padding_mask_mt.contiguous().view(-1)
-
-            audio_indices = torch.nonzero((~padding_mask_st).int(), as_tuple=True)
-            text_indices = torch.nonzero((~padding_mask_mt).int(), as_tuple=True)
-            audio_hidden = audio_hidden.index_select(0, audio_indices[0])
-            text_hidden = text_hidden.index_select(0, text_indices[0])
+            # audio_indices = torch.nonzero((~padding_mask_st).int(), as_tuple=True)
+            # text_indices = torch.nonzero((~padding_mask_mt).int(), as_tuple=True)
+            # audio_hidden = audio_hidden.index_select(0, audio_indices[0])
+            # text_hidden = text_hidden.index_select(0, text_indices[0])
+            audio_hidden = audio_hidden[~padding_mask_st, :]
+            text_hidden = text_hidden[~padding_mask_mt, :]
             assert audio_hidden.size(0) == text_hidden.size(0)
             sim_matrix = F.cosine_similarity(
-                audio_hidden.unsqueeze(0),
-                text_hidden.unsqueeze(1),
+                audio_hidden.unsqueeze(0).float(),
+                text_hidden.unsqueeze(1).float(),
                 dim=-1
             )
             sim_matrix /= self.contrastive_temperature

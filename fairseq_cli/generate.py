@@ -83,10 +83,10 @@ def _main(cfg: DictConfig, output_file):
     task = tasks.setup_task(cfg.task)
 
     # Set dictionaries
-    try:
-        src_dict = getattr(task, "source_dictionary", None)
-    except NotImplementedError:
-        src_dict = None
+    # try:
+    #     src_dict = getattr(task, "source_dictionary", None)
+    # except NotImplementedError:
+    src_dict = None
     tgt_dict = task.target_dictionary
 
     overrides = ast.literal_eval(cfg.common_eval.model_overrides)

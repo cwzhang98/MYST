@@ -165,7 +165,6 @@ class SpeechToTextCifMutiContrastTask(FairseqTask):
         else:
             #if cfg.ablation_type != "w2v_transformer":
             src_dict = Dictionary.load(src_dict_path.as_posix())
-            src_dict.add_symbol(src_lang_tag)
             # else:
             #     src_dict = None
             tgt_dict = Dictionary.load(tgt_dict_path.as_posix())

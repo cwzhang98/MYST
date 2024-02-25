@@ -151,12 +151,12 @@ class LabelSmoothedCrossEntropyWithCtcWithQuaCriterion(LabelSmoothedCrossEntropy
         ctc_loss_sum = sum(log.get("ctc_loss", 0) for log in logging_outputs)
         qua_loss = sum(log.get("qua_loss", 0) for log in logging_outputs)
         sample_size = sum(log.get("sample_size", 0) for log in logging_outputs)
-
+        nsentences = sum(log.get("nsentences", 0) for log in logging_outputs)
         metrics.log_scalar(
             "ctc_loss", ctc_loss_sum / sample_size / math.log(2), sample_size, round=3
         )
         metrics.log_scalar(
-            "qua_loss", qua_loss / sample_size / math.log(2), sample_size, round=3
+            "qua_loss", qua_loss / nsentences, sample_size, round=3
         )
         c_errors = sum(log.get("c_errors", 0) for log in logging_outputs)
         metrics.log_scalar("_c_errors", c_errors)

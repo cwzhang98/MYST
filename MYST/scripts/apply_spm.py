@@ -7,7 +7,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--input-file", type=str, required=True)
 parser.add_argument("--output-file", type=str, required=True)
 parser.add_argument("--model", type=str, required=True)
-parser.add_argument("--add_lang_tag", type=str, default=None)
+parser.add_argument("--add-lang-tag", type=str, default=None)
 
 args = parser.parse_args()
 

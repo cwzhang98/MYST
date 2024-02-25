@@ -34,8 +34,8 @@ criterion:
   report_accuracy: true
   ignore_prefix_size: 1
   use_jsd: true
-  contrast_granularity: coarse
-  contrast_level: low
+  contrast_granularity: fine
+  contrast_level: high
   contrastive_temperature: 0.02
   contrastive_weight: 1.5
   asr_task: true
@@ -63,7 +63,7 @@ model:
   share_decoder_input_output_embed: true
   layernorm_embedding: false
   no_scale_embedding: false
-  ablation_type: w2v_transformer
+#  model_type: w2v_transformer
   use_ctc: true
 
 dataset:

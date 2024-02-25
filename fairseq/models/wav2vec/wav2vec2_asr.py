@@ -284,7 +284,7 @@ class Wav2VecCtc(BaseFairseqModel):
     def get_ctc_target(self, sample):
         return sample["target"].long(), sample["target_lengths"].long()
 
-    def extract_features(self, transcript_lengths, source, padding_mask, freeze_w2v, use_ctc):
+    def extract_features(self, transcript_lengths, source, padding_mask, freeze_w2v, use_ctc=False):
         """
             similar to forward but only extract acoustic features
         """
@@ -301,7 +301,11 @@ class Wav2VecCtc(BaseFairseqModel):
             x["padding_mask"] = lengths_to_padding_mask(output_length)
         else:
             x["encoder_out"] = self.textual_dim_proj(x["encoder_out"])  # 768 -> 512
-        
+
+        if use_ctc:
+            ctc_logits = self.ctc_proj(x["encoder_out"]).float()
+            ctc_padding_mask = x["padding_mask"]
+
         if self.training:
             assert transcript_lengths is not None
             
@@ -310,7 +314,10 @@ class Wav2VecCtc(BaseFairseqModel):
             x["padding_mask"],
             transcript_lengths
         )
-        return cif_out["cif_out"][0], cif_out["cif_length"][0], cif_out["alpha"][0]  # cif aggraved features
+        if use_ctc:
+            return cif_out["cif_out"][0], cif_out["cif_length"][0], cif_out["alpha"][0], ctc_logits, ctc_padding_mask
+        else:
+            return cif_out["cif_out"][0], cif_out["cif_length"][0], cif_out["alpha"][0]  # cif aggraved features
 
     def forward(self, transcript_lengths, source, padding_mask, **kwargs):
         x = self.w2v_encoder(source, padding_mask, **kwargs)
@@ -467,15 +474,6 @@ class Wav2VecEncoder(FairseqEncoder):
         super().set_num_updates(num_updates)
         self.num_updates = num_updates
 
-    def extract_features(self, source, padding_mask, mask=False):
-        w2v_args = {
-            "source": source,
-            "padding_mask": padding_mask,
-            "mask": mask,
-        }
-        x, padding_mask = self.w2v_model.extract_features(**w2v_args)
-        return x, padding_mask
-
     def forward(self, source, padding_mask, **kwargs):
 
         w2v_args = {
@@ -496,8 +494,6 @@ class Wav2VecEncoder(FairseqEncoder):
             x, padding_mask = res
             if padding_mask is None:
                 padding_mask = torch.zeros((x.shape[0], x.shape[1]), dtype=bool, device=x.device)
-            # else:
-            #     padding_mask = res["padding_mask"]
 
         x = self.final_dropout(x)
 

@@ -120,9 +120,9 @@ class S2TTransformerWithCifContrastConfig(FairseqDataclass):
         default=False,
         metadata={"help": "if True, dont scale embeddings"}
     )
-    ablation_type: Optional[str] = field(
+    model_type: Optional[str] = field(
         default=None,
-        metadata={"help": "config for ablation study"}
+        metadata={"help": "raw w2v model or w2v_cif model as audio encoder"}
     )
     use_ctc: Optional[bool] = field(
         default=False,
@@ -203,7 +203,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
         assert cfg.w2v_model_path is not None and os.path.isfile(cfg.w2v_model_path)
         # load checkpoints
         ckpt = torch.load(cfg.w2v_model_path)
-        if cfg.ablation_type == "w2v_transformer":
+        if cfg.model_type == "w2v_transformer":
             w2v_args = convert_namespace_to_omegaconf(ckpt["args"])
             self.w2v_model = Wav2Vec2Model.build_model(w2v_args.model, task=None)
             self.subsample_audio = Conv1dSubsampler(
@@ -214,7 +214,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             )
             if self.cfg.use_ctc:
                 self.ctc_projection = nn.Linear(
-                    ckpt["args"].encoder_embed_dim,
+                    self.shared_encoder_embed_dim,
                     self.embed_tokens.weight.shape[0],
                 )
         else:
@@ -249,7 +249,7 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
 
     def encode_audio(self, src_tokens, src_lengths, transcript_lengths=None):
         padding_mask = lengths_to_padding_mask(src_lengths)
-        if self.cfg.ablation_type == "w2v_transformer":
+        if self.cfg.model_type == "w2v_transformer":
             if self.cfg.freeze_w2v:
                 with torch.no_grad():
                     w2v_feature, padding_mask = self.w2v_model.extract_features(src_tokens, padding_mask)
@@ -261,24 +261,33 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             feature_lengths = (1 - padding_mask.int()).sum(dim=1)
             # cnn subsampling
             w2v_feature, feature_lengths = self.subsample_audio(w2v_feature, feature_lengths)  # T x B x C
+            ctc_logits = self.ctc_projection(self.dropout_module(w2v_feature)).float()
         else:
-            w2v_feature, feature_lengths, alpha = self.w2v_model.extract_features(
-                transcript_lengths, src_tokens, padding_mask, self.freeze_w2v
-            )
+            if self.cfg.use_ctc:
+                w2v_feature, feature_lengths, alpha, ctc_logits, ctc_padding_mask = self.w2v_model.extract_features(
+                    transcript_lengths, src_tokens, padding_mask, self.freeze_w2v, self.cfg.use_ctc
+                )
+            else:
+                w2v_feature, feature_lengths, alpha = self.w2v_model.extract_features(
+                    transcript_lengths, src_tokens, padding_mask, self.freeze_w2v
+                )
+
         w2v_feature *= self.embed_scale
         encoder_padding_mask = lengths_to_padding_mask(feature_lengths)
         if self.positional_embed is not None:
             positions = self.positional_embed(encoder_padding_mask)  # B x T x C
-            if self.cfg.ablation_type == "w2v_transformer":
+            if self.cfg.model_type == "w2v_transformer":
                 positions = positions.transpose(0, 1)
             w2v_feature += positions
 
         w2v_feature = self.dropout_module(w2v_feature)
-        if self.cfg.ablation_type == "w2v_transformer":
-            return w2v_feature, encoder_padding_mask
+        if self.cfg.model_type == "w2v_transformer":
+            return w2v_feature, encoder_padding_mask, ctc_logits if self.cfg.use_ctc else None
         else:
             w2v_feature = w2v_feature.transpose(0, 1)  # B x T x C -> T x B x C
-            return w2v_feature, encoder_padding_mask, alpha
+            return (w2v_feature, encoder_padding_mask, alpha,
+                    ctc_logits.transpose(0, 1) if self.cfg.use_ctc else None,
+                    ctc_padding_mask if self.cfg.use_ctc else None)
 
     def encode_text(self, src_tokens):
         embedding = self.embed_tokens(src_tokens)
@@ -305,10 +314,10 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             src_lengths:(B)
         """
         if is_audio_input:  # forward audio
-            if self.cfg.ablation_type == "w2v_transformer":
-                x, encoder_padding_mask = self.encode_audio(src_tokens, src_lengths)
+            if self.cfg.model_type == "w2v_transformer":
+                    x, encoder_padding_mask, ctc_logits = self.encode_audio(src_tokens, src_lengths)
             else:
-                x, encoder_padding_mask, alpha = self.encode_audio(
+                x, encoder_padding_mask, alpha, ctc_logits, ctc_padding_mask = self.encode_audio(
                     src_tokens, src_lengths, transcript_lengths.squeeze(-1))
         else:  # forward text
             x, encoder_padding_mask = self.encode_text(src_tokens)
@@ -341,7 +350,10 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             "src_tokens": None,
             "src_lengths": None,
             "shared_encoder_states": None,
-            "alpha": alpha if is_audio_input and self.cfg.ablation_type != "w2v_transformer" else None
+            "alpha": alpha if is_audio_input and self.cfg.model_type != "w2v_transformer" else None,
+            "ctc_logits": [ctc_logits] if is_audio_input and self.cfg.use_ctc else None,
+            "ctc_padding_mask": [ctc_padding_mask] if is_audio_input and self.cfg.use_ctc
+                                                      and self.cfg.model_type != "w2v_transformer" else None
         }
 
     def reorder_encoder_out(self, encoder_out, new_order):
@@ -368,17 +380,17 @@ class S2TTransformerWithCifContrastEncoder(FairseqEncoder):
             "src_lengths": None
         }
 
-    def compute_ctc_logits_and_lprobs(self, src_tokens, src_lengths):
-        padding_mask = lengths_to_padding_mask(src_lengths)
-        if self.cfg.ablation_type == "w2v_transformer":
-            w2v_features, padding_mask = self.w2v_model.extract_features(src_tokens, padding_mask)
-        else:  # w2v cif model
-            w2v_features, padding_mask = self.w2v_model.w2v_encoder.extract_features(src_tokens, padding_mask)
-        if padding_mask is None:
-            padding_mask = torch.zeros(
-                (w2v_features.shape[0], w2v_features.shape[1]), device=w2v_features.device)
-        w2v_features = self.dropout_module(w2v_features)
-        ctc_logits = self.ctc_projection(w2v_features).float()  # B x T x C
-        lprobs = nn.functional.log_softmax(ctc_logits, dim=-1).transpose(0, 1)
-        return ctc_logits, padding_mask, lprobs
+    # def compute_ctc_logits_and_lprobs(self, src_tokens, src_lengths):
+    #     padding_mask = lengths_to_padding_mask(src_lengths)
+    #     if self.cfg.model_type == "w2v_transformer":
+    #         w2v_features, padding_mask = self.w2v_model.extract_features(src_tokens, padding_mask)
+    #     else:  # w2v cif model
+    #         w2v_features, padding_mask = self.w2v_model.w2v_encoder.extract_features(src_tokens, padding_mask)
+    #     if padding_mask is None:
+    #         padding_mask = torch.zeros(
+    #             (w2v_features.shape[0], w2v_features.shape[1]), device=w2v_features.device)
+    #     w2v_features = self.dropout_module(w2v_features)
+    #     ctc_logits = self.ctc_projection(w2v_features).float()  # B x T x C
+        #     lprobs = nn.functional.log_softmax(ctc_logits, dim=-1).transpose(0, 1)
+    #     return ctc_logits, padding_mask, lprobs
 

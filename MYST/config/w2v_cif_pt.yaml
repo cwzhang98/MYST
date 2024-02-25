@@ -10,19 +10,19 @@ checkpoint:
   save_dir: /home2/cwzhang98/project/MYST/checkpoint
   restore_file: /home2/cwzhang98/project/MYST/checkpoint/checkpoint_last.pt
   no_epoch_checkpoints: true
-  best_checkpoint_metric: wer
+  best_checkpoint_metric: loss
   patience: 10
 
 task:
   _name: audio_finetuning
   data: ???
   normalize: false
-  labels: pho
+  labels: spm
   enable_padding: true
 
 dataset:
-  num_workers: 8
-  max_tokens: 5000000
+  num_workers: 24
+  max_tokens: 8000000
   skip_invalid_size_inputs_valid_test: true
   valid_subset: dev_clean,dev_other
   update_epoch_batch_itr: false
@@ -39,8 +39,8 @@ criterion:
 
 optimization:
   max_update: 500000
-  clip_norm: 0.1
-  lr: [1e-4]
+  clip_norm: 1
+  lr: [5e-5]
   # sentence_avg: true
   update_freq: [1]
 
@@ -51,7 +51,7 @@ optimizer:
 
 lr_scheduler:
   _name: inverse_sqrt
-  warmup_updates: 4000
+  warmup_updates: 10000
 
 model:
   _name: wav2vec_ctc
@@ -69,4 +69,5 @@ model:
   cif_attention_dropout: 0.1
   beta: 1.0
   ctc_joint_training: true
-  shared_proj: true
+  shared_proj: false
+  sub_sampler: true

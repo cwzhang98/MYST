@@ -230,7 +230,7 @@ class SpeechTextTripleDataset(SpeechToTextDataset):
                 "src_lengths": n_frames,
                 "prev_output_tokens": prev_output_target_tokens,
                 # subtract lang tag length, num of fires only depends on real text length
-                "transcript_lengths": source_lengths - 2
+                "transcript_lengths": source_lengths
             },
             "target": target,  # target text
             "target_lengths": target_lengths,
