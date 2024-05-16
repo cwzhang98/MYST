@@ -552,13 +552,14 @@ def compute_mask_indices(
 
         mask_idc = np.unique(mask_idc[mask_idc < sz])
         if len(mask_idc) >= sz:
-            raise ValueError(
-                (
-                    f"the entire sequence is masked. "
-                    f"sz={sz}; mask_idc[mask_idc]; "
-                    f"index={indices[i] if indices is not None else None}"
-                )
-            )
+            mask_idc = np.array([])
+            # raise ValueError(
+            #     (
+            #         f"the entire sequence is masked. "
+            #         f"sz={sz}; mask_idc[mask_idc]; "
+            #         f"index={indices[i] if indices is not None else None}"
+            #     )
+            # )
         mask_idcs.append(mask_idc)
 
     target_len = None
@@ -571,8 +572,8 @@ def compute_mask_indices(
     for i, mask_idc in enumerate(mask_idcs):
         if target_len is not None and len(mask_idc) > target_len:
             mask_idc = rng.choice(mask_idc, target_len, replace=False)
-
-        mask[i, mask_idc] = True
+        if len(mask_idc) > 0:
+            mask[i, mask_idc] = True
 
         if target_len is not None and len(mask_idc) < target_len:
             unmasked = np.flatnonzero(~mask[i])

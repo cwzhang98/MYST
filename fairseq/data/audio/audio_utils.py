@@ -171,7 +171,7 @@ def get_raw_waveform_from_audio(path, offset, n_frames, normalization=True):
         "Unsupported audio format"
     wavform, _ = torchaudio.load(path, frame_offset=offset, num_frames=n_frames)
     if not normalization:
-        waveform *= 2 ** 15
+        wavform *= 2 ** 15
     return wavform
 
 def get_features_or_waveform(
